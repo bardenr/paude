@@ -18,6 +18,9 @@ Run AI coding agents in secure containers. They make commits, you pull them back
 
 Paude-managed agent containers include common development utilities, including
 `rg` (ripgrep) for fast code search.
+Codex and its code-mode host are compiled from the latest stable release source
+in a separate build stage. Rust and compilation dependencies stay out of the
+runtime image; the first build takes longer and needs additional memory and disk.
 The Codex CLI image also includes Node.js for documentation tooling, using the
 custom base image's package manager or an existing Node.js installation.
 

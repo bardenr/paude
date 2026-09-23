@@ -49,7 +49,7 @@ def generate_claude_layer_dockerfile(
     display = primary.config.display_name
     lines.append(f"# This layer adds {display} to the base paude image")
     lines.append("ARG BASE_IMAGE")
-    lines.append("FROM ${BASE_IMAGE}")
+    lines.append("FROM ${BASE_IMAGE} AS paude-base")
     lines.append("")
     lines.append("USER root")
 

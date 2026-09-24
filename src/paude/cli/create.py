@@ -67,6 +67,13 @@ def session_create(
             help="Force rebuild of workspace container image.",
         ),
     ] = False,
+    debian_proxy: Annotated[
+        bool,
+        typer.Option(
+            "--debian-proxy",
+            help="Build and use a Debian proxy image (supports older CPUs).",
+        ),
+    ] = False,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -325,6 +332,10 @@ def session_create(
             resolved=resolved,
             composition=composition,
         )
+        if debian_proxy:
+            typer.echo(
+                "Proxy: Debian (build locally or on the selected remote if missing)"
+            )
         raise typer.Exit()
 
     if ssh_key and not host:
@@ -389,6 +400,7 @@ def session_create(
         no_clone_origin=no_clone_origin,
         rebuild=rebuild,
         platform=r_platform,
+        debian_proxy=debian_proxy,
         agent_name=r_agent,
         provider_name=r_provider,
         agent_providers=resolved.agent_providers,

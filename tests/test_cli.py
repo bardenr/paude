@@ -2268,3 +2268,18 @@ class TestPrepareSessionCreateGitIdentity:
         assert "PAUDE_GIT_USER_EMAIL" not in env
         captured = capsys.readouterr()
         assert "No git identity found" not in captured.err
+
+
+def test_debian_proxy_dry_run() -> None:
+    with patch("paude.container.ImageManager") as manager:
+        result = runner.invoke(app, ["create", "--debian-proxy", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "Proxy: Debian" in result.stdout
+    manager.assert_not_called()
+
+
+def test_debian_proxy_flag_reaches_create_pipeline() -> None:
+    with patch("paude.cli.create_podman.create_podman_session") as create:
+        result = runner.invoke(app, ["create", "--debian-proxy"])
+    assert result.exit_code == 0, result.output
+    assert create.call_args.kwargs["debian_proxy"] is True

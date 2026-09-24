@@ -1,0 +1,43 @@
+# Build stage — compile paude-proxy from source
+FROM golang:1.23-bookworm AS builder
+WORKDIR /app
+ARG PAUDE_PROXY_VERSION=598d2d89cbc6a9002db71de9d31d20d70fefb1cc
+RUN git init . && \
+    git fetch --depth 1 https://github.com/bbrowning/paude-proxy.git ${PAUDE_PROXY_VERSION} && \
+    git checkout FETCH_HEAD && \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /paude-proxy ./cmd/paude-proxy/
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+# dnsmasq for DNS forwarding (needed by tools like Rust reqwest on internal networks)
+# curl for health checks and debugging
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        bash ca-certificates dnsmasq curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install tini init process for multi-process signal handling
+ARG TINI_VERSION=v0.19.0
+RUN ARCH=$(uname -m) && \
+    case "$ARCH" in \
+        x86_64) TINI_ARCH="amd64" ;; \
+        aarch64) TINI_ARCH="arm64" ;; \
+        *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-${TINI_ARCH}" \
+        -o /usr/local/bin/tini && \
+    chmod +x /usr/local/bin/tini && \
+    tini --version
+
+COPY --from=builder /paude-proxy /usr/local/bin/paude-proxy
+COPY --chmod=755 entrypoint.sh /usr/local/bin/paude-entrypoint.sh
+
+# Writable runtime directories
+RUN mkdir -p /data/ca /tmp
+# dnsmasq needs writable pid directory
+RUN mkdir -p /run/dnsmasq
+
+EXPOSE 3128
+
+ENTRYPOINT ["/usr/local/bin/tini", "--", "/usr/local/bin/paude-entrypoint.sh"]

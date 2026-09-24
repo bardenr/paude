@@ -21,6 +21,14 @@ Paude-managed agent containers include common development utilities, including
 The Codex CLI image also includes Node.js for documentation tooling, using the
 custom base image's package manager or an existing Node.js installation.
 
+For older x86 CPUs that cannot run the CentOS Stream 10 proxy, use
+`paude create --debian-proxy`. Paude builds a Debian proxy image on the selected
+local or remote container engine if missing, then reuses it. `--rebuild` forces
+another build, and upgrades preserve the Debian proxy choice. The first build
+needs internet access to fetch source, build dependencies, and base images.
+Use a compatible agent base too, such as `"base": "debian:bookworm"` in
+`paude.json` (remove any `"build"` section that selects a CentOS Dockerfile).
+
 Agent installation, credential setup, and provider selection are independent.
 `--agents` is the exact install set and its first entry launches as the primary.
 `--providers` selects credentials to configure, while `--agent-provider` maps

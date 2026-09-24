@@ -402,3 +402,14 @@ class TestPostCreate:
             _create(config=PaudeConfig())
 
         p.run_setup.assert_not_called()
+
+
+def test_debian_proxy_choice_reaches_image_manager_and_session() -> None:
+    with _pipeline() as p:
+        tag = "paude-proxy-debian12:0.20.4-linux-amd64"
+        p.image_manager.ensure_proxy_image.return_value = tag
+        _create(debian_proxy=True)
+    p.image_manager.ensure_proxy_image.assert_called_once_with(
+        force_rebuild=False, debian=True
+    )
+    assert p.config.proxy_image == tag

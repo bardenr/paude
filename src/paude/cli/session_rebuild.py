@@ -73,6 +73,7 @@ def build_session_images(
     workspace: Path,
     force_rebuild: bool,
     platform: str | None = None,
+    debian_proxy: bool = False,
 ) -> SessionImages:
     """Build (or reuse) the agent and proxy images for a session.
 
@@ -108,7 +109,12 @@ def build_session_images(
 
     # Always required: every session gets a proxy.
     try:
-        proxy_image = image_manager.ensure_proxy_image(force_rebuild=force_rebuild)
+        if debian_proxy:
+            proxy_image = image_manager.ensure_proxy_image(
+                force_rebuild=force_rebuild, debian=True
+            )
+        else:
+            proxy_image = image_manager.ensure_proxy_image(force_rebuild=force_rebuild)
     except Exception as e:
         raise ImageBuildError("proxy", e) from e
 

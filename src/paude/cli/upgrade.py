@@ -627,6 +627,7 @@ def _upgrade_podman(
     from paude.cli.session_rebuild import ImageBuildError, build_session_images
     from paude.config.detector import detect_config
     from paude.config.parser import parse_config
+    from paude.container.proxy_image import is_debian_proxy
 
     state, created_at = _resolve_upgrade_state(name, backend)
     _apply_overrides(state, overrides)
@@ -657,6 +658,7 @@ def _upgrade_podman(
             config=config,
             workspace=state.workspace,
             force_rebuild=True,
+            debian_proxy=is_debian_proxy(state.spec.proxy_image),
         )
     except ImageBuildError as e:
         raise RuntimeError(str(e)) from e

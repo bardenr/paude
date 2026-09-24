@@ -366,13 +366,18 @@ class ImageManager:
             print(f"  → Using default paude image: {base_image}", file=sys.stderr)
             return base_image, True
 
-    def ensure_proxy_image(self, force_rebuild: bool = False) -> str:
+    def ensure_proxy_image(
+        self, force_rebuild: bool = False, *, debian: bool = False
+    ) -> str:
         """Ensure the proxy image is available.
 
         Returns:
             Image tag to use.
         """
         import sys
+
+        if debian:
+            return self._ensure_debian_proxy_image(force_rebuild)
 
         if self.dev_mode and self.script_dir:
             if self.platform:
@@ -403,6 +408,18 @@ class ImageManager:
                     )
                     raise
             return tag
+
+    def _ensure_debian_proxy_image(self, force_rebuild: bool) -> str:
+        from paude.container.proxy_image import DEBIAN_PROXY_IMAGE, debian_proxy_context
+
+        arch = self.platform.replace("/", "-") if self.platform else "native"
+        tag = f"{DEBIAN_PROXY_IMAGE}:{self.version}-{arch}"
+        if force_rebuild or not self._engine.image_exists(tag):
+            context = debian_proxy_context(self.script_dir)
+            self.build_image(
+                context / "Dockerfile.debian", tag, context, fresh=force_rebuild
+            )
+        return tag
 
     def build_image(
         self,

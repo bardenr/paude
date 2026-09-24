@@ -587,6 +587,9 @@ class TestUpgradePodman:
     @patch("paude.mounts.build_mounts", return_value=[])
     @patch("paude.cli.helpers._prepare_session_create")
     @patch("paude.container.ImageManager")
+    @pytest.mark.parametrize(
+        "proxy_image", ["proxy:latest", "paude-proxy-debian12:0.20.4-linux-amd64"]
+    )
     @patch("paude.config.detector.detect_config", return_value=None)
     def test_upgrade_podman_reads_labels(
         self,
@@ -594,6 +597,7 @@ class TestUpgradePodman:
         mock_image_manager_class: MagicMock,
         mock_prepare: MagicMock,
         mock_build_mounts: MagicMock,
+        proxy_image: str,
     ) -> None:
         """Labels are correctly read from old container and passed to SessionConfig."""
         labels = self._make_container_labels(
@@ -601,7 +605,7 @@ class TestUpgradePodman:
             gpu="all",
             yolo=True,
             domains=".googleapis.com,.pypi.org",
-            proxy_image="proxy:latest",
+            proxy_image=proxy_image,
         )
 
         mock_image_manager = MagicMock()
@@ -624,6 +628,15 @@ class TestUpgradePodman:
             "test-session", up.backend, rebuild=False, overrides=_NO_OVERRIDES
         )
 
+        if proxy_image.startswith("paude-proxy-debian12:"):
+            mock_image_manager.ensure_proxy_image.assert_called_once_with(
+                force_rebuild=True, debian=True
+            )
+        else:
+            mock_image_manager.ensure_proxy_image.assert_called_once_with(
+                force_rebuild=True
+            )
+        assert up.config.proxy_image == "proxy:rebuilt"
         config = up.config
         assert config.agent == "gemini"
         assert config.gpu == "all"

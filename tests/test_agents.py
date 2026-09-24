@@ -506,12 +506,12 @@ class TestCodexAgentConfig:
 
     def test_install_script_uses_latest_stable_release(self) -> None:
         cfg = CodexAgent().config
-        assert "releases/latest" in cfg.install_script
-        assert '--branch "$CODEX_TAG"' in cfg.install_script
+        assert "releases/latest/download" in cfg.install_script
 
     def test_install_script_includes_code_mode_host(self) -> None:
         cfg = CodexAgent().config
-        assert "--bin codex --bin codex-code-mode-host" in cfg.install_script
+        assert "codex-code-mode-host-${CODEX_ARCH}.tar.gz" in cfg.install_script
+        assert '"$HOME/.local/bin/codex-code-mode-host"' in cfg.install_script
         assert 'test -x "$HOME/.local/bin/codex-code-mode-host"' in cfg.install_script
 
     def test_config_dir_name(self) -> None:
@@ -583,6 +583,11 @@ class TestCodexAgentDockerfile:
         assert isinstance(lines, list)
         assert len(lines) > 0
 
+    def test_contains_install_url(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
+        text = "\n".join(lines)
+        assert "openai/codex" in text
+
     def test_installs_nodejs_for_documentation_tooling(self) -> None:
         lines = CodexAgent().dockerfile_install_lines("/home/paude")
         text = "\n".join(lines)
@@ -592,14 +597,25 @@ class TestCodexAgentDockerfile:
         assert "command -v dnf" in text
         assert "command -v yum" in text
 
-    def test_copies_both_binaries_from_builder(self) -> None:
-        text = "\n".join(CodexAgent().dockerfile_install_lines("/custom/home"))
-        assert "COPY --from=codex-builder --chown=paude:0" in text
-        assert "/opt/paude-codex-build/.local/bin/ /custom/home/.local/bin/" in text
-        assert "/custom/home/.local/bin/codex --version" in text
-        assert "/custom/home/.local/bin/codex-code-mode-host --help" in text
-        assert "cargo build" not in text
-        assert "rustup" not in text
+    def test_contains_version(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
+        text = "\n".join(lines)
+        assert "releases/latest/download" in text
+
+    def test_contains_arch_detection(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
+        text = "\n".join(lines)
+        assert "uname -m" in text
+
+    def test_contains_x86_64_arch(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
+        text = "\n".join(lines)
+        assert "x86_64-unknown-linux-musl" in text
+
+    def test_contains_aarch64_arch(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
+        text = "\n".join(lines)
+        assert "aarch64-unknown-linux-musl" in text
 
     def test_sets_path(self) -> None:
         lines = CodexAgent().dockerfile_install_lines("/home/paude")
@@ -611,16 +627,30 @@ class TestCodexAgentDockerfile:
         text = "\n".join(lines)
         assert "/custom/home" in text
 
-    def test_builder_verifies_install_with_pipefail(self) -> None:
-        lines = CodexAgent().config.build_stage_lines
+    def test_pipefail_shell(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
         text = "\n".join(lines)
-        assert "USER root" in lines
         assert "pipefail" in text
-        assert "cargo build --locked --release" in text
-        assert "test -x /opt/paude-codex-build/.local/bin/codex" in text
+
+    def test_binary_verification(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
+        text = "\n".join(lines)
+        assert "test -x /home/paude/.local/bin/codex" in text
+
+    def test_shell_reset(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
         assert 'SHELL ["/bin/sh", "-c"]' in lines
-        assert "gcc-c++" in text
-        assert "openssl-devel" in text
+
+    def test_error_message(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
+        text = "\n".join(lines)
+        assert "ERROR" in text
+        assert "installation failed" in text
+
+    def test_contains_umask(self) -> None:
+        lines = CodexAgent().dockerfile_install_lines("/home/paude")
+        text = "\n".join(lines)
+        assert "umask 0002" in text
 
 
 class TestCodexAgentLaunchCommand:

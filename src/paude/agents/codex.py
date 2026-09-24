@@ -10,36 +10,37 @@ from paude.agents.base import (
     build_provider_credentials,
     nodejs_prereq_install_lines,
     pipefail_install_lines,
-    rust_build_prereq_install_lines,
-    rust_runtime_prereq_install_lines,
 )
 from paude.constants import CONTAINER_HOME
 
-# Use a subshell so the runtime fallback does not change the caller's cwd/PATH.
-# The source tree selects its own Rust version via rust-toolchain.toml.
 _INSTALL_SCRIPT = (
-    "("
-    'export PATH="$HOME/.cargo/bin:$PATH" && '
-    "if ! command -v rustup >/dev/null 2>&1; then "
-    "curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs "
-    "| sh -s -- -y --profile minimal --default-toolchain none; fi && "
-    "CODEX_SOURCE=$(mktemp -d) && "
-    "trap 'rm -rf \"$CODEX_SOURCE\"' EXIT && "
-    "CODEX_TAG=$(curl -fsSL "
-    "https://api.github.com/repos/openai/codex/releases/latest "
-    "| jq -er '.tag_name') && "
-    'git clone --depth 1 --branch "$CODEX_TAG" '
-    'https://github.com/openai/codex.git "$CODEX_SOURCE" && '
-    'cd "$CODEX_SOURCE/codex-rs" && '
-    "CARGO_PROFILE_RELEASE_STRIP=symbols cargo build --locked --release "
-    "--bin codex --bin codex-code-mode-host && "
     'mkdir -p "$HOME/.local/bin" && '
-    "install -m 0755 target/release/codex target/release/codex-code-mode-host "
-    '"$HOME/.local/bin/" && '
-    'test -x "$HOME/.local/bin/codex-code-mode-host")'
+    "ARCH=$(uname -m) && "
+    'case "$ARCH" in '
+    'x86_64) CODEX_ARCH="x86_64-unknown-linux-musl" ;; '
+    'aarch64) CODEX_ARCH="aarch64-unknown-linux-musl" ;; '
+    '*) echo "Unsupported architecture: $ARCH" && exit 1 ;; '
+    "esac && "
+    "curl -fsSL "
+    '"https://github.com/openai/codex/releases/latest/download/'
+    'codex-${CODEX_ARCH}.tar.gz"'
+    ' | tar xz -C "$HOME/.local/bin" "codex-${CODEX_ARCH}" && '
+    'mv "$HOME/.local/bin/codex-${CODEX_ARCH}" "$HOME/.local/bin/codex" && '
+    # Recent Codex releases spawn a companion "code-mode host" binary via an
+    # absolute path next to the codex binary for every tool call. Install it
+    # alongside codex from the same (latest) release so the versioned handshake
+    # matches and tool calls work out of the box.
+    "curl -fsSL "
+    '"https://github.com/openai/codex/releases/latest/download/'
+    'codex-code-mode-host-${CODEX_ARCH}.tar.gz"'
+    ' | tar xz -C "$HOME/.local/bin" "codex-code-mode-host-${CODEX_ARCH}" && '
+    'mv "$HOME/.local/bin/codex-code-mode-host-${CODEX_ARCH}" '
+    '"$HOME/.local/bin/codex-code-mode-host" && '
+    # The build only verifies the primary codex binary (pipefail_install_lines),
+    # so verify the companion here too — a missing companion fails every tool
+    # call at runtime, the exact failure this install is meant to prevent.
+    'test -x "$HOME/.local/bin/codex-code-mode-host"'
 )
-
-_BUILD_HOME = "/opt/paude-codex-build"
 
 
 class CodexAgent:
@@ -71,12 +72,6 @@ class CodexAgent:
             required_domain_aliases=creds.chatgpt_domain_aliases,
             provider=creds.resolved_provider_name,
         )
-        self._config.build_stage_lines = [
-            *rust_build_prereq_install_lines(),
-            f"ENV HOME={_BUILD_HOME}",
-            f"WORKDIR {_BUILD_HOME}",
-            *pipefail_install_lines(self._config, _BUILD_HOME),
-        ]
 
     @property
     def config(self) -> AgentConfig:
@@ -87,15 +82,11 @@ class CodexAgent:
             "",
             "# Install Node.js for Codex documentation tooling",
             *nodejs_prereq_install_lines(),
-            *rust_runtime_prereq_install_lines(),
             "",
             "# Install Codex CLI",
             "USER paude",
             f"WORKDIR {container_home}",
-            f"COPY --from=codex-builder --chown=paude:0 "
-            f"{_BUILD_HOME}/.local/bin/ {container_home}/.local/bin/",
-            f"RUN {container_home}/.local/bin/codex --version && "
-            f"{container_home}/.local/bin/codex-code-mode-host --help >/dev/null",
+            *pipefail_install_lines(self._config, container_home),
             "",
             f'ENV PATH="{container_home}/{self._config.install_dir}:$PATH"',
         ]

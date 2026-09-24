@@ -45,8 +45,6 @@ class AgentConfig:
             When this agent is requested, each bundled agent is also expanded
             into the composed install set (e.g. gascity bundles claude and
             gemini).
-        build_stage_lines: Optional builder instructions. The composer forks
-            a <name>-builder stage from the generator's named paude-base stage.
     """
 
     name: str
@@ -74,8 +72,6 @@ class AgentConfig:
     default_base_image: str | None = None
     provider: str | None = None
     bundled_agents: list[str] = field(default_factory=list)
-    # Instructions for an isolated <name>-builder stage based on paude-base.
-    build_stage_lines: list[str] = field(default_factory=list)
 
     @property
     def persistent_dir_names(self) -> list[str]:
@@ -235,68 +231,6 @@ def nodejs_prereq_install_lines() -> list[str]:
             "fi"
         ),
     ]
-
-
-def rust_build_prereq_install_lines() -> list[str]:
-    """Install native Rust build dependencies only in the builder stage."""
-    common = "git curl ca-certificates jq make cmake perl pkg-config clang binutils"
-    return [
-        "USER root",
-        "RUN if command -v apt-get >/dev/null 2>&1; then "
-        "apt-get update && apt-get install -y --no-install-recommends "
-        f"{common} build-essential libssl-dev libclang-dev libcap-dev python3 "
-        "&& rm -rf /var/lib/apt/lists/*; "
-        "elif command -v apk >/dev/null 2>&1; then "
-        f"apk add --no-cache {common} build-base openssl-dev clang-dev "
-        "libcap-dev python3; "
-        "elif command -v dnf >/dev/null 2>&1; then "
-        f"dnf install -y {common} gcc gcc-c++ openssl-devel clang-devel "
-        "libcap-devel python3 "
-        "&& dnf clean all; "
-        "elif command -v yum >/dev/null 2>&1; then "
-        f"yum install -y {common} gcc gcc-c++ openssl-devel clang-devel "
-        "libcap-devel python3 "
-        "&& yum clean all; "
-        "else echo 'Error: Rust builds require a supported package manager' "
-        ">&2; exit 1; fi",
-    ]
-
-
-def rust_runtime_prereq_install_lines() -> list[str]:
-    """Provide shared libraries used by native Codex builds on custom images."""
-    return [
-        "USER root",
-        "RUN if command -v apt-get >/dev/null 2>&1; then "
-        "apt-get update && apt-get install -y --no-install-recommends "
-        "openssl libstdc++6 && rm -rf /var/lib/apt/lists/*; "
-        "elif command -v apk >/dev/null 2>&1; then "
-        "apk add --no-cache libssl3 libcrypto3 libstdc++; "
-        "elif command -v dnf >/dev/null 2>&1; then "
-        "dnf install -y openssl-libs libstdc++ && dnf clean all; "
-        "elif command -v yum >/dev/null 2>&1; then "
-        "yum install -y openssl-libs libstdc++ && yum clean all; "
-        "else echo 'Error: Codex requires a supported package manager' >&2; "
-        "exit 1; fi",
-    ]
-
-
-def _build_stage_lines(agents: Sequence[Agent]) -> list[str]:
-    """Fork builders from the prepared base, then restore it for installation."""
-    lines: list[str] = []
-    seen: set[str] = set()
-    for agent in agents:
-        config = agent.config
-        if config.build_stage_lines and config.name not in seen:
-            seen.add(config.name)
-            lines.extend(
-                [
-                    f"FROM paude-base AS {config.name}-builder",
-                    *config.build_stage_lines,
-                ]
-            )
-    if lines:
-        lines.extend(["FROM paude-base", "USER root"])
-    return lines
 
 
 def claude_trust_script(home: str, workspace: str) -> str:
@@ -471,10 +405,6 @@ def compose_dockerfile_install_lines(
 ) -> list[str]:
     """Concatenate multiple agents' Dockerfile install lines into one layer set.
 
-    The caller must name its prepared stage ``paude-base``. Optional builders
-    fork from that stage before any runtime agent installation, then the final
-    stage resumes from the same base so custom packages and setup are retained.
-
     Agents are laid out in the given order. Shared prerequisite install lines
     (e.g. the Node.js/npm package install) emitted by more than one agent are
     deduplicated — the first occurrence wins and later identical package-install
@@ -497,7 +427,6 @@ def compose_dockerfile_install_lines(
         )
     )
     combined: list[str] = [
-        *_build_stage_lines(agents),
         "",
         "# Create persistent configuration directories for every installed agent",
         f"RUN mkdir -p {' '.join(config_dirs)} && chown -R paude {container_home}",

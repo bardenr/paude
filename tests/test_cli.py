@@ -866,7 +866,7 @@ def test_help_shows_extra_sections():
     assert "Security" in output
     assert "Agents" in output
     assert "Podman 4.0+" in output
-    assert "isolated proxy networking" in output
+    assert "isolated proxy networking" in " ".join(output.replace("│", " ").split())
 
 
 @pytest.mark.parametrize(

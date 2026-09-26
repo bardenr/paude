@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(
 def _archive(path: Path, arch: str, broken: str) -> None:
     manifest = {
         "layoutVersion": 1,
-        "version": "0.157.0",
+        "version": "0.155.0",
         "target": f"{arch}-unknown-linux-musl",
         "variant": "codex",
         "entrypoint": "bin/codex",
@@ -31,6 +31,8 @@ def _archive(path: Path, arch: str, broken: str) -> None:
     }
     if broken == "wrong-target":
         manifest["target"] = "wrong-target"
+    if broken == "wrong-version":
+        manifest["version"] = "0.157.1"
     files = {
         "codex-package.json": json.dumps(manifest).encode(),
         "bin/codex": b"#!/bin/sh\necho codex-test\n",
@@ -61,6 +63,7 @@ def _archive(path: Path, arch: str, broken: str) -> None:
         "codex-path/rg",
         "codex-resources/bwrap",
         "wrong-target",
+        "wrong-version",
         "not-executable",
         "curl-failure",
     ],
@@ -108,6 +111,7 @@ def test_install_preserves_package_layout_and_rejects_partial_downloads(
         text=True,
     )
     assert not list((home / ".local/lib").glob(".codex-install.*"))
+    assert "releases/download/rust-v0.155.0/" in log.read_text()
     assert f"codex-package-{arch}-unknown-linux-musl.tar.gz" in log.read_text()
     if broken:
         assert result.returncode != 0
@@ -122,7 +126,7 @@ def test_install_preserves_package_layout_and_rejects_partial_downloads(
         assert os.access(bin_dir / binary, os.X_OK)
     assert (
         json.loads((old_package / "codex-package.json").read_text())["version"]
-        == "0.157.0"
+        == "0.155.0"
     )
     assert (
         old_package / "codex-resources/voice/NOTICE.md"

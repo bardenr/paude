@@ -504,9 +504,10 @@ class TestCodexAgentConfig:
         cfg = CodexAgent().config
         assert "openai/codex" in cfg.install_script
 
-    def test_install_script_uses_latest_stable_release(self) -> None:
+    def test_install_script_pins_proxy_compatible_release(self) -> None:
         cfg = CodexAgent().config
-        assert "releases/latest/download" in cfg.install_script
+        assert "releases/download/rust-v0.155.0/" in cfg.install_script
+        assert "releases/latest" not in cfg.install_script
 
     def test_install_script_includes_code_mode_host(self) -> None:
         cfg = CodexAgent().config
@@ -600,7 +601,7 @@ class TestCodexAgentDockerfile:
     def test_contains_version(self) -> None:
         lines = CodexAgent().dockerfile_install_lines("/home/paude")
         text = "\n".join(lines)
-        assert "releases/latest/download" in text
+        assert "releases/download/rust-v0.155.0/" in text
 
     def test_contains_arch_detection(self) -> None:
         lines = CodexAgent().dockerfile_install_lines("/home/paude")

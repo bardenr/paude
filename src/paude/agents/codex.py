@@ -13,6 +13,10 @@ from paude.agents.base import (
 )
 from paude.constants import CONTAINER_HOME
 
+# 0.156+ compares the proxy's synthetic account ID with real workspace IDs.
+# Keep this pin until paude-proxy supports workspace-routing discovery.
+CODEX_VERSION = "0.155.0"
+
 # Keep the complete upstream layout together: daemon bootstrap discovers the
 # manifest and helper resources relative to the real executable, not PATH.
 # Stage and validate first so failed downloads do not replace an existing install.
@@ -28,11 +32,12 @@ _INSTALL_SCRIPT = (
     'CODEX_STAGE=$(mktemp -d "$HOME/.local/lib/.codex-install.XXXXXX") && '
     "trap 'rm -rf \"$CODEX_STAGE\"' EXIT && "
     "curl -fsSL "
-    '"https://github.com/openai/codex/releases/latest/download/'
+    f'"https://github.com/openai/codex/releases/download/rust-v{CODEX_VERSION}/'
     'codex-package-${CODEX_ARCH}.tar.gz" '
     '| tar xz -C "$CODEX_STAGE" && '
-    'jq -e --arg target "$CODEX_ARCH" '
-    '\'.layoutVersion == 1 and .target == $target and .variant == "codex" '
+    f'jq -e --arg version "{CODEX_VERSION}" --arg target "$CODEX_ARCH" '
+    "'.version == $version and .layoutVersion == 1 "
+    'and .target == $target and .variant == "codex" '
     'and .entrypoint == "bin/codex"\' '
     '"$CODEX_STAGE/codex-package.json" >/dev/null && '
     'test -x "$CODEX_STAGE/bin/codex" && '

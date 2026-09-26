@@ -18,8 +18,10 @@ Run AI coding agents in secure containers. They make commits, you pull them back
 
 Paude-managed agent containers include common development utilities, including
 `rg` (ripgrep) for fast code search.
-Codex installs the complete upstream release package, including its manifest
-and helper resources required by the background server. To refresh an existing
+Codex is temporarily pinned to **0.155.0** for compatibility with the proxy's
+ChatGPT authentication. Newer releases compare the synthetic account ID with
+real workspace IDs and fail during account lookup. The complete release package
+is installed, including its manifest and helper resources. To refresh an existing
 session after updating Paude, run `paude upgrade SESSION` from the host.
 The Codex CLI image also includes Node.js for documentation tooling, using the
 custom base image's package manager or an existing Node.js installation.
@@ -252,7 +254,8 @@ After updating Paude, refresh a session with:
 paude upgrade SESSION
 ```
 
-The command performs a fresh build with the latest stable agent tooling and
+The command performs a fresh build with the configured agent tooling (including
+the Codex compatibility pin) and
 migrates state from older containers before replacing them. Upgrades are
 crash-safe: your `/pvc` data volume is reused in place and never removed, and if
 an upgrade is interrupted (e.g. `Ctrl-C`) you can simply re-run

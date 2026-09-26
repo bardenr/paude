@@ -510,7 +510,7 @@ class TestCodexAgentConfig:
 
     def test_install_script_includes_code_mode_host(self) -> None:
         cfg = CodexAgent().config
-        assert "codex-code-mode-host-${CODEX_ARCH}.tar.gz" in cfg.install_script
+        assert "codex-package-${CODEX_ARCH}.tar.gz" in cfg.install_script
         assert '"$HOME/.local/bin/codex-code-mode-host"' in cfg.install_script
         assert 'test -x "$HOME/.local/bin/codex-code-mode-host"' in cfg.install_script
 

@@ -89,6 +89,9 @@ _SECTIONS: tuple[HelpSection, ...] = (
         text=(
             "Paude-managed agent containers include common development"
             " utilities, including rg (ripgrep) for fast code search."
+            " Codex includes the complete release package required by its"
+            " background server. Use paude upgrade NAME to refresh an existing"
+            " session after updating Paude."
             " The Codex CLI image also includes Node.js for documentation"
             " tooling, using the custom base image's package manager or an"
             " existing Node.js installation. Podman 4.0+ or Docker is required"

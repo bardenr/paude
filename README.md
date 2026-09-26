@@ -18,6 +18,9 @@ Run AI coding agents in secure containers. They make commits, you pull them back
 
 Paude-managed agent containers include common development utilities, including
 `rg` (ripgrep) for fast code search.
+Codex installs the complete upstream release package, including its manifest
+and helper resources required by the background server. To refresh an existing
+session after updating Paude, run `paude upgrade SESSION` from the host.
 The Codex CLI image also includes Node.js for documentation tooling, using the
 custom base image's package manager or an existing Node.js installation.
 

@@ -13,33 +13,38 @@ from paude.agents.base import (
 )
 from paude.constants import CONTAINER_HOME
 
+# Keep the complete upstream layout together: daemon bootstrap discovers the
+# manifest and helper resources relative to the real executable, not PATH.
+# Stage and validate first so failed downloads do not replace an existing install.
 _INSTALL_SCRIPT = (
-    'mkdir -p "$HOME/.local/bin" && '
+    "("
+    'mkdir -p "$HOME/.local/bin" "$HOME/.local/lib" && '
     "ARCH=$(uname -m) && "
     'case "$ARCH" in '
     'x86_64) CODEX_ARCH="x86_64-unknown-linux-musl" ;; '
     'aarch64) CODEX_ARCH="aarch64-unknown-linux-musl" ;; '
     '*) echo "Unsupported architecture: $ARCH" && exit 1 ;; '
     "esac && "
+    'CODEX_STAGE=$(mktemp -d "$HOME/.local/lib/.codex-install.XXXXXX") && '
+    "trap 'rm -rf \"$CODEX_STAGE\"' EXIT && "
     "curl -fsSL "
     '"https://github.com/openai/codex/releases/latest/download/'
-    'codex-${CODEX_ARCH}.tar.gz"'
-    ' | tar xz -C "$HOME/.local/bin" "codex-${CODEX_ARCH}" && '
-    'mv "$HOME/.local/bin/codex-${CODEX_ARCH}" "$HOME/.local/bin/codex" && '
-    # Recent Codex releases spawn a companion "code-mode host" binary via an
-    # absolute path next to the codex binary for every tool call. Install it
-    # alongside codex from the same (latest) release so the versioned handshake
-    # matches and tool calls work out of the box.
-    "curl -fsSL "
-    '"https://github.com/openai/codex/releases/latest/download/'
-    'codex-code-mode-host-${CODEX_ARCH}.tar.gz"'
-    ' | tar xz -C "$HOME/.local/bin" "codex-code-mode-host-${CODEX_ARCH}" && '
-    'mv "$HOME/.local/bin/codex-code-mode-host-${CODEX_ARCH}" '
+    'codex-package-${CODEX_ARCH}.tar.gz" '
+    '| tar xz -C "$CODEX_STAGE" && '
+    'jq -e --arg target "$CODEX_ARCH" '
+    '\'.layoutVersion == 1 and .target == $target and .variant == "codex" '
+    'and .entrypoint == "bin/codex"\' '
+    '"$CODEX_STAGE/codex-package.json" >/dev/null && '
+    'test -x "$CODEX_STAGE/bin/codex" && '
+    'test -x "$CODEX_STAGE/bin/codex-code-mode-host" && '
+    'test -x "$CODEX_STAGE/codex-path/rg" && '
+    'test -x "$CODEX_STAGE/codex-resources/bwrap" && '
+    'rm -rf "$HOME/.local/lib/codex" && '
+    'mv "$CODEX_STAGE" "$HOME/.local/lib/codex" && '
+    'ln -sfn ../lib/codex/bin/codex "$HOME/.local/bin/codex" && '
+    "ln -sfn ../lib/codex/bin/codex-code-mode-host "
     '"$HOME/.local/bin/codex-code-mode-host" && '
-    # The build only verifies the primary codex binary (pipefail_install_lines),
-    # so verify the companion here too — a missing companion fails every tool
-    # call at runtime, the exact failure this install is meant to prevent.
-    'test -x "$HOME/.local/bin/codex-code-mode-host"'
+    'test -x "$HOME/.local/bin/codex-code-mode-host")'
 )
 
 

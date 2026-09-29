@@ -1,5 +1,8 @@
-FROM quay.io/centos/centos:stream10
+ARG CENTOS_STREAM=10
+FROM quay.io/centos/centos:stream${CENTOS_STREAM}
+ARG CENTOS_STREAM
 
+# Stream 9 dnf needs its system Python; expose Python 3.12 under /usr/local.
 # Enable CRB and EPEL for additional packages
 RUN dnf install -y dnf-plugins-core && \
     dnf config-manager --set-enabled crb && \
@@ -38,8 +41,13 @@ RUN dnf install -y dnf-plugins-core && \
         tree \
         ripgrep \
     && dnf clean all && \
-    alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
-    alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    if [ "$CENTOS_STREAM" = 9 ]; then \
+        ln -sf /usr/bin/python3.12 /usr/local/bin/python && \
+        ln -sf /usr/bin/python3.12 /usr/local/bin/python3; \
+    else \
+        alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
+        alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1; \
+    fi && \
     tmux -V
 
 # Set UTF-8 locale

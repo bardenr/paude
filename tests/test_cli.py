@@ -2268,3 +2268,30 @@ class TestPrepareSessionCreateGitIdentity:
         assert "PAUDE_GIT_USER_EMAIL" not in env
         captured = capsys.readouterr()
         assert "No git identity found" not in captured.err
+
+
+def test_centos9_flag_reaches_create_pipeline() -> None:
+    with patch("paude.cli.create_podman.create_podman_session") as create:
+        result = runner.invoke(app, ["create", "--centos9"])
+    assert result.exit_code == 0, result.output
+    assert create.call_args.kwargs["centos9"] is True
+
+
+def test_centos9_dry_run_does_not_build() -> None:
+    with patch("paude.container.ImageManager") as manager:
+        result = runner.invoke(app, ["create", "--centos9", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "Images: CentOS Stream 9" in result.stdout
+    manager.assert_not_called()
+
+
+def test_centos9_rejects_custom_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "paude.json").write_text('{"base": "debian:bookworm"}')
+    with patch("paude.cli.create_podman.create_podman_session") as create:
+        result = runner.invoke(app, ["create", "--centos9", "--dry-run"])
+    assert result.exit_code == 1, result.output
+    assert "cannot be combined" in result.output
+    create.assert_not_called()

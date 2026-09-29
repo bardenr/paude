@@ -402,3 +402,12 @@ class TestPostCreate:
             _create(config=PaudeConfig())
 
         p.run_setup.assert_not_called()
+
+
+def test_centos9_mode_reaches_image_manager_and_session() -> None:
+    with _pipeline() as p:
+        tag = "paude-proxy-centos9:0.20.4-linux-amd64"
+        p.image_manager.ensure_proxy_image.return_value = tag
+        _create(centos9=True)
+    assert p.image_manager_cls.call_args.kwargs["centos9"] is True
+    assert p.config.proxy_image == tag

@@ -46,6 +46,7 @@ def create_podman_session(
     no_clone_origin: bool = False,
     rebuild: bool,
     platform: str | None,
+    centos9: bool = False,
     agent_name: str = "claude",
     provider_name: str | None = None,
     agent_providers: list[tuple[str, str]] | None = None,
@@ -81,6 +82,7 @@ def create_podman_session(
             workspace=workspace,
             force_rebuild=rebuild,
             platform=platform,
+            centos9=centos9,
         )
     except ImageBuildError as e:
         label = "image" if e.stage == "agent" else "proxy image"

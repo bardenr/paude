@@ -26,6 +26,19 @@ session after updating Paude, run `paude upgrade SESSION` from the host.
 The Codex CLI image also includes Node.js for documentation tooling, using the
 custom base image's package manager or an existing Node.js installation.
 
+For older CPUs, `paude create my-project --centos9 --agent codex --git` builds
+both the base and proxy images from CentOS Stream 9 on the selected Docker or
+Podman engine (including SSH remotes). Stream 10 remains the default. Stream 9
+requires x86-64-v2 on Intel/AMD machines; it does not support every older CPU.
+
+The first build needs network access and takes longer. Images are cached
+separately by Paude version and platform; `--rebuild` forces a fresh build.
+`paude upgrade my-project` preserves the Stream 9 choice. No development-mode
+setting is required, and the build files are included in installed packages.
+The flag cannot be combined with a custom `base` or `build` Dockerfile in
+`paude.json`, or an agent that requires its own base image. `packages` and
+`setup` customizations still work.
+
 Agent installation, credential setup, and provider selection are independent.
 `--agents` is the exact install set and its first entry launches as the primary.
 `--providers` selects credentials to configure, while `--agent-provider` maps

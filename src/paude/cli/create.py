@@ -67,6 +67,13 @@ def session_create(
             help="Force rebuild of workspace container image.",
         ),
     ] = False,
+    centos9: Annotated[
+        bool,
+        typer.Option(
+            "--centos9",
+            help="Build and cache both images locally using CentOS Stream 9.",
+        ),
+    ] = False,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -277,6 +284,15 @@ def session_create(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
 
+    if centos9:
+        from paude.container.local_images import validate_centos9_base
+
+        try:
+            validate_centos9_base(config, composition.primary)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from None
+
     # Use resolved domains, or fall back to ["default"] if nothing configured
     r_allowed_domains: list[str] | None = (
         resolved.allowed_domains if resolved.allowed_domains else None
@@ -325,6 +341,10 @@ def session_create(
             resolved=resolved,
             composition=composition,
         )
+        if centos9:
+            typer.echo(
+                "Images: CentOS Stream 9 (built on the selected engine if missing)"
+            )
         raise typer.Exit()
 
     if ssh_key and not host:
@@ -389,6 +409,7 @@ def session_create(
         no_clone_origin=no_clone_origin,
         rebuild=rebuild,
         platform=r_platform,
+        centos9=centos9,
         agent_name=r_agent,
         provider_name=r_provider,
         agent_providers=resolved.agent_providers,

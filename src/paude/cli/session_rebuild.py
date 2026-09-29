@@ -73,6 +73,7 @@ def build_session_images(
     workspace: Path,
     force_rebuild: bool,
     platform: str | None = None,
+    centos9: bool = False,
 ) -> SessionImages:
     """Build (or reuse) the agent and proxy images for a session.
 
@@ -92,6 +93,7 @@ def build_session_images(
         agent=composition.primary,
         composition=composition,
         engine=engine,
+        centos9=centos9,
     )
 
     try:

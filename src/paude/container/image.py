@@ -62,7 +62,9 @@ class ImageManager:
         agent: Agent | None = None,
         composition: AgentComposition | None = None,
         engine: ContainerEngine | None = None,
+        centos9: bool = False,
     ):
+        self.centos9 = centos9
         self.script_dir = script_dir
         self.dev_mode = os.environ.get("PAUDE_DEV", "0") == "1"
         self.registry = os.environ.get("PAUDE_REGISTRY", "quay.io/bbrowning")
@@ -90,6 +92,10 @@ class ImageManager:
         Returns:
             Image tag to use (the runtime image with agent installed).
         """
+        if self.centos9:
+            from paude.container.local_images import validate_centos9_base
+
+            validate_centos9_base(None, self.agent)
         if self.agent and self.agent.config.default_base_image:
             return self._ensure_agent_base_image(force_rebuild=force_rebuild)
         base_tag = self._ensure_base_image(force_refresh=force_rebuild)
@@ -165,6 +171,11 @@ class ImageManager:
     def _ensure_base_image(self, force_refresh: bool = False) -> str:
         """Ensure the base paude image (without agent) is available."""
         import sys
+
+        if self.centos9:
+            from paude.container.local_images import ensure_centos9_image
+
+            return ensure_centos9_image(self, "base", force_refresh)
 
         if self.dev_mode and self.script_dir:
             if self.platform:
@@ -266,9 +277,14 @@ class ImageManager:
         """
         import sys
 
+        if self.centos9:
+            from paude.container.local_images import validate_centos9_base
+
+            validate_centos9_base(config, self.agent)
+
         entrypoint = resolve_entrypoint(self.script_dir)
         agent_name = self._composition_fingerprint()
-        effective_base = config.base_image
+        effective_base = "paude-base-centos9" if self.centos9 else config.base_image
         if not effective_base and self.agent and self.agent.config.default_base_image:
             effective_base = self.agent.config.default_base_image
         config_hash = compute_config_hash(
@@ -373,6 +389,11 @@ class ImageManager:
             Image tag to use.
         """
         import sys
+
+        if self.centos9:
+            from paude.container.local_images import ensure_centos9_image
+
+            return ensure_centos9_image(self, "proxy", force_rebuild)
 
         if self.dev_mode and self.script_dir:
             if self.platform:

@@ -96,7 +96,10 @@ _SECTIONS: tuple[HelpSection, ...] = (
             " The Codex CLI image also includes Node.js for documentation"
             " tooling, using the custom base image's package manager or an"
             " existing Node.js installation. Podman 4.0+ or Docker is required"
-            " for isolated proxy networking."
+            " for isolated proxy networking. Use create --centos9 for locally"
+            " built Stream 9 base and proxy images (x86-64-v2 CPUs or newer)."
+            " Builds are cached and upgrades preserve the choice."
+            " This requires the default base; custom base images are incompatible."
         ),
     ),
     HelpSection(

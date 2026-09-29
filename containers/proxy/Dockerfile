@@ -1,3 +1,4 @@
+ARG CENTOS_STREAM=10
 # Build stage — compile paude-proxy from source
 FROM golang:1.23 AS builder
 WORKDIR /app
@@ -8,11 +9,11 @@ RUN git init . && \
     CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /paude-proxy ./cmd/paude-proxy/
 
 # Runtime stage
-FROM quay.io/centos/centos:stream10
+FROM quay.io/centos/centos:stream${CENTOS_STREAM}
 
 # dnsmasq for DNS forwarding (needed by tools like Rust reqwest on internal networks)
 # curl for health checks and debugging
-RUN dnf install -y dnsmasq curl && dnf clean all
+RUN dnf install -y --allowerasing dnsmasq curl && dnf clean all
 
 # Install tini init process for multi-process signal handling
 ARG TINI_VERSION=v0.19.0

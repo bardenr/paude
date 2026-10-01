@@ -1,6 +1,9 @@
 # Build stage — compile paude-proxy from source
 FROM golang:1.23 AS builder
 WORKDIR /app
+# When bumping this pin, re-sync DEFAULT_CREDENTIAL_ROUTES in
+# src/paude/proxy_credential_routes.py with the proxy's embedded
+# internal/credentials/credentials.json.
 ARG PAUDE_PROXY_VERSION=f45876a12b622c259b74ebc0db01f55220d616b2
 RUN git init . && \
     git fetch --depth 1 https://github.com/bbrowning/paude-proxy.git ${PAUDE_PROXY_VERSION} && \

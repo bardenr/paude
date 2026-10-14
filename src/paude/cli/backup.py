@@ -189,7 +189,8 @@ def session_backup(
     Captures the session's ``/pvc`` data volume (workspace + agent state) and a
     config manifest into a ``<name>-<timestamp>.paude/`` directory. The session
     must be stopped first (``paude stop NAME``) so the snapshot is consistent.
-    Agent credential files are always excluded. ``--remote-only`` writes the
+    Agent credential files and agent-regenerated caches are always excluded.
+    ``--remote-only`` writes the
     bundle on the session's remote host instead, so nothing large crosses the
     SSH link back to this machine.
     """
@@ -269,7 +270,10 @@ def _finalize_backup(
     """
     from paude.backends import SessionNotFoundError
     from paude.backends.podman.helpers import composition_for_spec
-    from paude.backends.podman.legacy_state import credential_exclude_globs
+    from paude.backends.podman.legacy_state import (
+        backup_exclude_globs,
+        credential_exclude_globs,
+    )
 
     try:
         # One container fetch feeds both the exclude list and the manifest;
@@ -277,7 +281,9 @@ def _finalize_backup(
         view = backend_obj.resources.labels(name)
         if view is None:
             raise RuntimeError(f"Session '{name}' not found.")
-        exclude = credential_exclude_globs(composition_for_spec(view.spec))
+        composition = composition_for_spec(view.spec)
+        credentials = credential_exclude_globs(composition)
+        exclude = backup_exclude_globs(composition)
         manifest = _build_manifest(view, name, image, now, backend_obj.backend_type)
         write(manifest, exclude)
     except SessionNotFoundError as e:
@@ -288,7 +294,7 @@ def _finalize_backup(
         raise typer.Exit(1) from None
 
     typer.echo(f"Backed up session '{name}' to {location_label}")
-    if exclude:
+    if credentials:
         typer.echo(
             "  Credential files were excluded; re-login inside the session after "
             "restore for agents that authenticate in-container (e.g. Gemini, "

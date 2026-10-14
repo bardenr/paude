@@ -96,6 +96,29 @@ def credential_exclude_globs(composition: AgentComposition) -> list[str]:
     return globs
 
 
+def backup_exclude_globs(composition: AgentComposition) -> list[str]:
+    """Return every HOME-relative path to exclude from a backup.
+
+    Credential files (see ``credential_exclude_globs``) plus directories the
+    agents regenerate on their own (``backup_exclude_dir_names``), which would
+    only bloat the bundle.
+    """
+    globs = list(
+        dict.fromkeys(
+            [
+                *credential_exclude_globs(composition),
+                *(
+                    name
+                    for agent in composition.agents
+                    for name in agent.config.backup_exclude_dir_names
+                ),
+            ]
+        )
+    )
+    _validate_relative_paths(globs)
+    return globs
+
+
 def migrate_legacy_state(
     runner: ContainerRunner,
     container_name: str,

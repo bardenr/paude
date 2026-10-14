@@ -223,6 +223,10 @@ secrets. As a safeguard, `paude backup` also always strips known agent auth file
 re-login inside the session for any agent that authenticates via an in-container
 login flow.
 
+Backups also skip large directories an agent regenerates on its own, such as
+the copy of the Codex install package (`.codex/packages`) that Codex's
+background server keeps in its home directory.
+
 Backup requires the session to be **stopped** so nothing is writing to the
 workspace, git, or agent history databases while the snapshot is taken.
 

@@ -865,9 +865,9 @@ kept a *secondary* agent to avoid its no-timeout install curl at headless start
 (see RUNTIME-003).
 
 **Still open (deliberately deferred):** verifying the *physical* agent-binary
-install from a real image rebuild — that a rebuilt layer actually places `codex`
-+ `codex-code-mode-host` on `$PATH`. This needs an unmocked
-`ensure_default_image(force_rebuild=True)`, which downloads from GitHub's
+install from a real image rebuild — that a rebuilt layer actually places the
+complete `codex-package` (with `codex` linked onto `$PATH`). This needs an
+unmocked `ensure_default_image(force_rebuild=True)`, which downloads from GitHub's
 `latest` release (multi-minute, network/rate-limit flaky) — too costly for the
 PR-blocking `podman-integration` job. It is already enforced at image-build time
 by codex's own `test -x` verification (`agents/codex.py`, `agents/base.py`) and

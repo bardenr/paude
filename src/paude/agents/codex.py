@@ -14,32 +14,30 @@ from paude.agents.base import (
 from paude.constants import CONTAINER_HOME
 
 _INSTALL_SCRIPT = (
-    'mkdir -p "$HOME/.local/bin" && '
+    'mkdir -p "$HOME/.local/bin" "$HOME/.local/share/codex" && '
     "ARCH=$(uname -m) && "
     'case "$ARCH" in '
     'x86_64) CODEX_ARCH="x86_64-unknown-linux-musl" ;; '
     'aarch64) CODEX_ARCH="aarch64-unknown-linux-musl" ;; '
     '*) echo "Unsupported architecture: $ARCH" && exit 1 ;; '
     "esac && "
+    # Recent Codex releases refuse to start their background app-server
+    # daemon ("this CLI has no complete local package") unless the codex
+    # binary lives inside a full package: codex-package.json plus the
+    # companion code-mode host, bundled rg, and bundled bwrap. Install the
+    # whole package outside the persistent CODEX_HOME volume (so it ships
+    # with the image) and expose its entrypoint on PATH via a symlink, as
+    # the standalone installer does.
     "curl -fsSL "
     '"https://github.com/openai/codex/releases/latest/download/'
-    'codex-${CODEX_ARCH}.tar.gz"'
-    ' | tar xz -C "$HOME/.local/bin" "codex-${CODEX_ARCH}" && '
-    'mv "$HOME/.local/bin/codex-${CODEX_ARCH}" "$HOME/.local/bin/codex" && '
-    # Recent Codex releases spawn a companion "code-mode host" binary via an
-    # absolute path next to the codex binary for every tool call. Install it
-    # alongside codex from the same (latest) release so the versioned handshake
-    # matches and tool calls work out of the box.
-    "curl -fsSL "
-    '"https://github.com/openai/codex/releases/latest/download/'
-    'codex-code-mode-host-${CODEX_ARCH}.tar.gz"'
-    ' | tar xz -C "$HOME/.local/bin" "codex-code-mode-host-${CODEX_ARCH}" && '
-    'mv "$HOME/.local/bin/codex-code-mode-host-${CODEX_ARCH}" '
-    '"$HOME/.local/bin/codex-code-mode-host" && '
-    # The build only verifies the primary codex binary (pipefail_install_lines),
-    # so verify the companion here too — a missing companion fails every tool
-    # call at runtime, the exact failure this install is meant to prevent.
-    'test -x "$HOME/.local/bin/codex-code-mode-host"'
+    'codex-package-${CODEX_ARCH}.tar.gz"'
+    ' | tar xz -C "$HOME/.local/share/codex" && '
+    'test -f "$HOME/.local/share/codex/codex-package.json" && '
+    # The build only verifies the codex entrypoint (pipefail_install_lines),
+    # so verify the companion code-mode host too — a missing companion fails
+    # every tool call at runtime.
+    'test -x "$HOME/.local/share/codex/bin/codex-code-mode-host" && '
+    'ln -sfn ../share/codex/bin/codex "$HOME/.local/bin/codex"'
 )
 
 
@@ -66,6 +64,10 @@ class CodexAgent:
             # non-secret ChatGPT account ID; strip it from backups anyway so
             # bundles never carry auth material.
             credential_file_names=[".codex/auth.json"],
+            # The app-server daemon copies the full Codex package (~430 MB)
+            # here on first start and recreates it if missing; the image
+            # already ships the same package.
+            backup_exclude_dir_names=[".codex/packages"],
             activity_files=[],
             yolo_flag="--dangerously-bypass-approvals-and-sandbox",
             clear_command=None,

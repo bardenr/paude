@@ -209,6 +209,44 @@ class TestPortForwardProxy:
             raise
         assert proc.returncode is not None
 
+    def test_proxy_shuts_down_on_sigterm_with_open_connections(self) -> None:
+        """SIGTERM must stop the proxy even when worker threads are running.
+
+        The kernel may deliver the signal to a connection thread rather than
+        the main thread; the proxy must still notice it. Repeat a few times
+        since the delivery target is not deterministic.
+        """
+        for _ in range(10):
+            listen_port = _find_free_port()
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "paude.backends.podman.port_forward_proxy",
+                    "--forward",
+                    str(listen_port),
+                    "cat",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            _wait_for_port(listen_port)
+            conns = [
+                socket.create_connection(("127.0.0.1", listen_port)) for _ in range(5)
+            ]
+            try:
+                os.kill(proc.pid, signal.SIGTERM)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    _cleanup_proxy(proc)
+                    raise
+            finally:
+                for conn in conns:
+                    conn.close()
+            assert proc.returncode == 0
+
     def test_proxy_binds_to_localhost_only(self) -> None:
         """Verify the proxy only listens on 127.0.0.1."""
         listen_port = _find_free_port()

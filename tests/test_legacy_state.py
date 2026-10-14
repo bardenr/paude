@@ -10,6 +10,7 @@ import pytest
 from paude.agents import get_agents
 from paude.backends.podman.legacy_state import (
     _MIGRATE_SCRIPT,
+    backup_exclude_globs,
     migrate_legacy_state,
     persistent_state_paths,
 )
@@ -34,6 +35,22 @@ def test_composed_state_paths_include_agent_and_shared_state() -> None:
         ".dolt",
     ]
     assert files == [".gitconfig"]
+
+
+def test_backup_excludes_credentials_and_regenerated_dirs() -> None:
+    composition = get_agents(["codex", "gemini"], include_bundled=False)
+
+    assert backup_exclude_globs(composition) == [
+        ".codex/auth.json",
+        ".gemini/oauth_creds.json",
+        ".codex/packages",
+    ]
+
+
+def test_backup_excludes_only_credentials_without_regenerated_dirs() -> None:
+    composition = get_agents(["gemini"], include_bundled=False)
+
+    assert backup_exclude_globs(composition) == [".gemini/oauth_creds.json"]
 
 
 def test_migration_starts_and_restops_a_stopped_container() -> None:

@@ -508,14 +508,31 @@ class TestCodexAgentConfig:
         cfg = CodexAgent().config
         assert "releases/latest/download" in cfg.install_script
 
-    def test_install_script_includes_code_mode_host(self) -> None:
+    def test_install_script_installs_complete_package(self) -> None:
+        # The app-server daemon refuses to start from a bare binary.
         cfg = CodexAgent().config
-        assert "codex-code-mode-host-${CODEX_ARCH}.tar.gz" in cfg.install_script
-        assert '"$HOME/.local/bin/codex-code-mode-host"' in cfg.install_script
-        assert 'test -x "$HOME/.local/bin/codex-code-mode-host"' in cfg.install_script
+        assert "codex-package-${CODEX_ARCH}.tar.gz" in cfg.install_script
+        assert (
+            'test -f "$HOME/.local/share/codex/codex-package.json"'
+            in cfg.install_script
+        )
+        assert (
+            'test -x "$HOME/.local/share/codex/bin/codex-code-mode-host"'
+            in cfg.install_script
+        )
+
+    def test_install_script_links_package_entrypoint_onto_path(self) -> None:
+        cfg = CodexAgent().config
+        assert (
+            'ln -sfn ../share/codex/bin/codex "$HOME/.local/bin/codex"'
+            in cfg.install_script
+        )
 
     def test_config_dir_name(self) -> None:
         assert CodexAgent().config.config_dir_name == ".codex"
+
+    def test_backup_skips_daemon_package_copy(self) -> None:
+        assert CodexAgent().config.backup_exclude_dir_names == [".codex/packages"]
 
     def test_config_file_name_is_none(self) -> None:
         assert CodexAgent().config.config_file_name is None

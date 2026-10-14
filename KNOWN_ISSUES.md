@@ -834,7 +834,7 @@ single file. Add a test that transfers a single file and asserts the correct
 
 ### TEST-001: `test_proxy_shuts_down_on_sigterm` is flaky under full-suite load
 
-**Status**: Open
+**Status**: Resolved (2026-10-14)
 **Priority**: Low
 **Discovered**: 2026-08-01 during a review-fix pass on the `--agents/--providers` branch
 
@@ -845,6 +845,14 @@ The failure is timing/resource-contention related (SIGTERM delivery and socket
 teardown racing under concurrent full-suite load), not a product defect. Consider
 adding an explicit wait/retry on the shutdown assertion or isolating the test's
 port/socket allocation so it is deterministic under load.
+
+**Resolved (2026-10-14):** this was a real product bug, not test flakiness. The
+proxy's main thread blocked in an untimed `threading.Event.wait()`. When the
+kernel delivered SIGTERM to a worker thread, the Python handler (which only
+runs on the main thread) never ran, so the proxy ignored the signal. It
+reproduced in about 1 in 4 runs with a few connections open. The main thread
+now waits with a timeout, and
+`test_proxy_shuts_down_on_sigterm_with_open_connections` covers it.
 
 ### TEST-003: In-place agent-set / provider upgrades — integration coverage
 
@@ -865,9 +873,9 @@ kept a *secondary* agent to avoid its no-timeout install curl at headless start
 (see RUNTIME-003).
 
 **Still open (deliberately deferred):** verifying the *physical* agent-binary
-install from a real image rebuild — that a rebuilt layer actually places `codex`
-+ `codex-code-mode-host` on `$PATH`. This needs an unmocked
-`ensure_default_image(force_rebuild=True)`, which downloads from GitHub's
+install from a real image rebuild — that a rebuilt layer actually places the
+complete `codex-package` (with `codex` linked onto `$PATH`). This needs an
+unmocked `ensure_default_image(force_rebuild=True)`, which downloads from GitHub's
 `latest` release (multi-minute, network/rate-limit flaky) — too costly for the
 PR-blocking `podman-integration` job. It is already enforced at image-build time
 by codex's own `test -x` verification (`agents/codex.py`, `agents/base.py`) and

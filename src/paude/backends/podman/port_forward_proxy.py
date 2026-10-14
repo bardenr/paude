@@ -202,8 +202,12 @@ def main(argv: list[str] | None = None) -> NoReturn:
             daemon=True,
         ).start()
 
-    # Block until shutdown is requested (parent death or signal).
-    shutdown_event.wait()
+    # Block until shutdown is requested (parent death or signal). Wait with a
+    # timeout: the kernel may deliver SIGTERM to a worker thread, which only
+    # flags it for the main thread. An untimed wait never wakes to run the
+    # Python handler, so the proxy would ignore the signal.
+    while not shutdown_event.wait(timeout=0.5):
+        pass
     _shutdown()
 
 

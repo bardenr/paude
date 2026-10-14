@@ -12,6 +12,7 @@ The container intentionally restricts certain operations:
 | `~/.gitconfig` | host config is read-only; a writable copy is persisted at `/pvc/.gitconfig` for local and `--host` remote sessions. The author identity is additionally resolved on the host via `git config` (honoring global, XDG, system, and `includeIf` sources) and applied inside the container when the seeded config lacks one | Git identity |
 | SSH keys | not mounted | Prevents git push via SSH |
 | GitHub CLI config | not mounted | Prevents cached host credentials |
+| Codex ChatGPT OAuth tokens | never enter the agent's container; `codex login` runs inside the session, and the proxy sidecar keeps the real tokens and hands Codex synthetic ones | Codex's `auth.json` does hold the real ChatGPT account (workspace) ID. It is an identifier, not a credential, and Codex needs it for workspace routing discovery. The proxy still sets the `ChatGPT-Account-ID` header itself |
 | `GH_TOKEN` (host) | never propagated | Set `PAUDE_GITHUB_TOKEN` before `create`/`start`; the real token goes only to the proxy sidecar, never the agent's container |
 | Git credentials | not mounted | Prevents HTTPS git push |
 

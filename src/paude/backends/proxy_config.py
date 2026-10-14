@@ -55,7 +55,10 @@ PROXY_GCP_ADC_ENV = "GCP_ADC_JSON"
 # Codex's own login flow writes its auth.json itself (under CODEX_HOME,
 # i.e. /home/paude/.codex, which is symlinked onto /pvc); paude-proxy swaps
 # in synthetic values at the token exchange so real tokens never land in the
-# agent container. paude's reset of that auth.json lives with the other codex
+# agent container. The synthetic id_token does carry real, non-secret claims
+# (the ChatGPT account/workspace ID and plan type), because Codex needs the
+# real account ID to pass its workspace routing discovery check.
+# paude's reset of that auth.json lives with the other codex
 # on-volume paths as CODEX_AUTH_TARGET in agents/codex_config.py.
 PROXY_CHATGPT_AUTH_STATE_ENV = "PAUDE_PROXY_CHATGPT_AUTH_STATE_FILE"
 

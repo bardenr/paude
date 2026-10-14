@@ -545,6 +545,20 @@ Gemini CLI 0.36.0 introduced a regression where `HttpsProxyAgent is not a constr
 
 Paude pins to `@google/gemini-cli@0.35.3` (last working version) in `src/paude/agents/gemini.py`. Once the upstream issue is fixed, unpin and test with the proxy container.
 
+### AGENT-004: Codex ChatGPT workspaces with a non-`chatgpt.com` backend are unsupported
+
+**Status**: Open (paude-proxy limitation, triggered by upstream Codex routing)
+**Severity**: Low (affects only workspaces with a dedicated backend origin, e.g. data residency)
+**Discovered**: 2026-10-14 while fixing "selected workspace missing from routing discovery"
+
+Before each session, Codex CLI runs workspace routing discovery. It calls `GET https://chatgpt.com/backend-api/wham/accounts/check` and finds the entry matching the `account_id` in `~/.codex/auth.json`. That entry's `workspace_backend_origin` and `account_routing_override` can send model traffic to a different host than `chatgpt.com`, and add an `x-openai-account-routing-override` header. Codex does this in `codex-rs/app-server/src/request_processors/account_processor/workspace_routing.rs` and `codex-rs/model-provider/src/workspace_routing.rs`.
+
+paude-proxy's ChatGPT OAuth route is exact `chatgpt.com` with path prefix `/backend-api`. The default Codex domain allowlist (`chatgpt.com`, `.chatgpt.com`, `auth.openai.com`) is wider than that route. A backend origin under `*.chatgpt.com` gets past the domain filter but is forwarded without the real `Authorization` / `ChatGPT-Account-ID` headers. Any other origin is blocked outright. Either way, Codex fails after login. Workspaces whose origin is `NO_CONSTRAINT` (the common case) are unaffected.
+
+Fixing this would mean letting the ChatGPT injector (paude-proxy `internal/credentials/credentials.json`) and paude's Codex domain aliases (`src/paude/domains.py`) cover those backend origins. That needs a known list of OpenAI's regional backend hosts, or a proxy that learns them from the `accounts/check` response. Learning them would be riskier, because an allowlist would then expand based on a response body.
+
+**Workaround**: None in paude. Use a workspace without a dedicated backend origin, or use the `openai` provider with an API key.
+
 ## Security Hardening Backlog
 
 Deferred items from the network egress security audit (2026-03-06).

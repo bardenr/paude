@@ -177,6 +177,13 @@ OAuth tokens and manages refresh transparently and independently; real tokens
 never reach the agent container. Each session has its own OAuth lineage tied
 to its own private state volume, so multiple ChatGPT-plan sessions can run
 concurrently without one session's token refresh invalidating another's.
+The container's Codex `auth.json` does contain your real ChatGPT account
+(workspace) ID. It is not a credential, and Codex needs it to pass its
+workspace routing check.
+
+If Codex fails with `selected workspace missing from routing discovery` in a
+session created before this fix, run `paude upgrade` on the session, then run
+`codex login` inside it again.
 
 Pass `--provider openai` to use the plain `OPENAI_API_KEY` provider instead
 — no ChatGPT plan, no proxy-managed auth. The default Codex network policy

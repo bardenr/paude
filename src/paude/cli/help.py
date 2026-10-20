@@ -185,13 +185,14 @@ _SECTIONS: tuple[HelpSection, ...] = (
             ("paude create -a '-p \"prompt\"'", "Create session with initial prompt"),
             (
                 "paude create --env ENABLE_TOOL_SEARCH=true",
-                "Set an env var in the agent container (not for secrets)",
+                "Set an env var in the agent container (secrets rejected)",
             ),
             (
                 "paude create --provider anthropic"
                 " --credential-domain anthropic=gw.example.com"
                 " --env ANTHROPIC_BASE_URL=https://gw.example.com",
-                "Send the API key to a company AI gateway via the proxy",
+                "Send the API key to a company AI gateway via the proxy"
+                " (one provider per host)",
             ),
             ("paude create --dry-run", "Verify configuration without creating"),
             ("paude create --backend=docker", "Create session using Docker engine"),

@@ -188,11 +188,11 @@ def host_matches_allowed_domains(host: str, domains: list[str]) -> bool:
         return True
 
     canonical_host = _canonical_match_host(host)
-    return any(_domain_matches_host(canonical_host, domain) for domain in expanded)
+    return any(domain_matches_host(canonical_host, domain) for domain in expanded)
 
 
-def _domain_matches_host(host: str, domain: str) -> bool:
-    """Match one proxy allowed-domain entry without enforcing policy."""
+def domain_matches_host(host: str, domain: str) -> bool:
+    """Match one proxy domain entry (exact, ``.suffix``, or ``~regex``)."""
     if domain.startswith("~"):
         try:
             return re.search(domain[1:], host) is not None

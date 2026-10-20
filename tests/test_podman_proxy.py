@@ -1671,6 +1671,50 @@ class TestCredentialRoutes:
         assert len(self._routes_written(runner)) == 1
         assert self.ROUTES_ENV in self._create_env(runner)
 
+    @patch("paude.backends.podman.proxy.get_podman_machine_dns", return_value=None)
+    def test_recreate_skips_dead_builtin_route(self, mock_dns: MagicMock) -> None:
+        """A spec on a built-in host recreates fine when the rival env var
+        is not among the session's credentials (the proxy skips it)."""
+        runner, manager = self._manager()
+        with (
+            patch.object(
+                manager,
+                "get_config_from_labels",
+                return_value=(
+                    "proxy:latest",
+                    ["api.anthropic.com"],
+                    [],
+                    [],
+                    ["anthropic=api.anthropic.com:443"],
+                ),
+            ),
+            patch("paude.container.volume.VolumeManager"),
+        ):
+            manager.start_if_needed("s", credentials={"ANTHROPIC_API_KEY": "sk"})
+
+        assert len(self._routes_written(runner)) == 1
+
+    @patch("paude.backends.podman.proxy.get_podman_machine_dns", return_value=None)
+    def test_recreate_rejects_live_builtin_collision(self, mock_dns: MagicMock) -> None:
+        """A spec colliding with a live built-in route fails the rebuild."""
+        runner, manager = self._manager()
+        with (
+            patch.object(
+                manager,
+                "get_config_from_labels",
+                return_value=(
+                    "proxy:latest",
+                    ["chatgpt.com"],
+                    [],
+                    [],
+                    ["anthropic=chatgpt.com:443"],
+                ),
+            ),
+            patch("paude.container.volume.VolumeManager"),
+        ):
+            with pytest.raises(ValueError, match="a built-in route"):
+                manager.start_if_needed("s", credentials={"OPENAI_API_KEY": "sk"})
+
     @patch("paude.backends.podman.proxy._get_host_dns", return_value=None)
     def test_update_domains_keeps_routes_env_without_rewrite(
         self, mock_dns: MagicMock

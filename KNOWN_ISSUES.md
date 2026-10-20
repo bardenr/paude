@@ -913,6 +913,103 @@ Implement a `--remove-agent AGENT` option (additive delta, symmetric with
 `--add-agent`) that enforces the guards above and decides the orphaned-state
 policy.
 
+### FEATURE-002: Single-session MaaS endpoints serving multiple protocols
+
+**Status**: Open (deferred follow-up)
+**Priority**: Low (workaround exists)
+**Discovered**: 2026-10-20 during review follow-up on the `--env`/`--credential-domain` work
+
+A model-as-a-service endpoint that speaks both the Anthropic protocol
+(`/v1/messages`) and the OpenAI protocol (`/v1/chat/completions`) on one
+host, authenticating with a single key, cannot serve a session that
+installs both claude and codex agents. The user would export the same
+secret as both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, map
+`--agent-provider claude=anthropic --agent-provider codex=openai`, and
+route both providers to the same `--credential-domain` host — which
+`parse_credential_domains` (`src/paude/proxy_credential_routes.py`)
+rejects, because paude-proxy applies only the first matching route per
+host (so codex would get `x-api-key` instead of `Authorization: Bearer`,
+or vice versa depending on flag order — silently, and only working at all
+if the gateway happens to accept the winning header on both protocols).
+
+**Workaround**: two sessions, one per agent, each with a single provider
+routed to the shared host. The one-provider-per-host rule is per-session
+(each session has its own proxy sidecar and routing file), so two
+sessions pointing at the same host do not collide, and each proxy injects
+its key in the correct header format for its protocol.
+
+**Fix direction**: path-aware custom routes. The routing table already
+supports `path_prefix` (the ChatGPT route uses `/backend-api`), so paude
+could emit host+path routes — anthropic's `x-api-key` for `/v1/messages`,
+openai's `Bearer` for the rest — making one host serve both protocols
+with no gateway assumptions. Needs a paude-proxy change (verify
+`path_prefix` interacts with first-match the way this assumes) plus a
+paude-side change in `build_credential_routes_config`, and a decision on
+whether the same-host rejection should be relaxed for providers whose
+host env values are identical at create time.
+
+### FEATURE-003: Same-host credential guard misses custom-vs-default route collisions
+
+**Status**: Resolved (2026-10-20)
+**Priority**: Low (requires an unusual spec)
+**Discovered**: 2026-10-20 during a `/simplify` review of the same-host
+rejection in `parse_credential_domains`
+
+The one-credential-per-host rejection added with FEATURE-002's guardrail
+only compares hosts claimed by `--credential-domain` specs against each
+other. It does not compare them against `DEFAULT_CREDENTIAL_ROUTES`, even
+though the invariant it guards ("the proxy injects only the first
+matching route per host") is a property of the merged table that
+`build_credential_routes_config` assembles — custom routes first, then
+the defaults. So `--credential-domain openai=api.anthropic.com` in a
+session configuring both anthropic and openai passes validation and
+builds an `OPENAI_API_KEY` bearer route for `api.anthropic.com` that sits
+ahead of the default anthropic routes, silently sending the wrong
+credential header to Anthropic's API. The same applies to any host the
+default table claims (`chatgpt.com`, `.googleapis.com`, `api.github.com`,
+`.cursor.com`, `.claude.ai`).
+
+A second, slower variant: `DEFAULT_CREDENTIAL_ROUTES` is a hand-copied
+snapshot that must be kept in sync with the paude-proxy pin, so a proxy
+upgrade can add default domains that newly collide with specs already
+persisted on existing sessions — and the parse-time check, which ran at
+create time against the old table, never re-runs.
+
+**Fix direction**: enforce host-uniqueness in
+`build_credential_routes_config`, where the complete route table exists —
+walk the final table and reject any host claimed by routes carrying
+different `env_var`s. Call that single check from `create` (and wherever
+routes are rebuilt) so the early, well-worded create-time error is
+preserved; `parse_credential_domains` keeps only the checks about spec
+syntax and provider configuration.
+
+**Resolved (2026-10-20):** implemented as prescribed. The check now lives
+in `_reject_ambiguous_hosts`, called by `build_credential_routes_config`;
+every host a custom route claims is compared against the other custom
+routes and the built-in table (using the proxy's domain-match semantics),
+and a collision raises a `ValueError` naming the spec and both
+credentials. `create` runs the same check up front via
+`validate_credential_domain_specs` for the same error surface, and the
+proxy rebuild paths (`start_if_needed`, `create_proxy`)
+run the check via `_write_credential_routes`. A side effect worth noting:
+a session persisted with a colliding spec (only possible via the gap
+above, since custom-vs-custom was already rejected at create) now fails
+`start` with that error instead of silently shadowing a credential.
+
+**Refined (2026-10-20):** a follow-up review found the built-in-route
+half of the check was stricter than the proxy it guards. The proxy skips
+a route whose env var is unset (with gcloud falling back to
+`GCP_ADC_JSON` and chatgpt to the OAuth mode signal), and its
+`DomainSuffix` match requires the dot, so the bare apex of a suffix route
+never matches. The check now takes the session's proxy credentials to
+decide which built-in routes are live (create passes the gathered set;
+rebuilds pass what they are about to hand the proxy), and matches
+domains with the proxy's semantics rather than the advisory
+`domain_matches_host`. Consequence: a spec that merely repeats a dead
+built-in route or claims a suffix route's apex is accepted as redundant
+instead of being rejected as a conflict, and `paude connect` reports a
+rebuild collision as a one-line error like `paude start` does.
+
 ## Documentation Gaps
 
 Found during a 2026-07-22 audit to add OpenCode support to README/docs/CLI help.

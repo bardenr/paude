@@ -136,12 +136,19 @@ class PodmanProxyManager:
         return env
 
     def _write_credential_routes(
-        self, auth_volume: str, proxy_image: str, credential_domains: list[str]
+        self,
+        auth_volume: str,
+        proxy_image: str,
+        credential_domains: list[str],
+        credentials: Mapping[str, str] | None = None,
     ) -> None:
         """Write the session's custom routing file into its auth volume.
 
         Done on proxy create and recreate so the file matches this paude's
-        routing table; domain/endpoint updates reuse the file already there.
+        routing table; domain/endpoint updates reuse the file already
+        there. The credentials decide which built-in routes are live for
+        the same-host collision check, matching what the proxy will skip
+        for unset env vars.
         """
         if not credential_domains:
             return
@@ -157,7 +164,7 @@ class PodmanProxyManager:
             auth_volume,
             proxy_image,
             CREDENTIAL_ROUTES_PATH,
-            json.dumps(build_credential_routes_config(credential_domains)),
+            json.dumps(build_credential_routes_config(credential_domains, credentials)),
             description="proxy credential routes",
         )
 
@@ -273,7 +280,9 @@ class PodmanProxyManager:
         dns = _get_host_dns(self._runner.engine)
         secret_refs = self._create_credential_secrets(session_name, credentials)
         credential_env = self._credential_env(credentials, credential_domains)
-        self._write_credential_routes(auth_vol, proxy_image, credential_domains)
+        self._write_credential_routes(
+            auth_vol, proxy_image, credential_domains, credentials
+        )
 
         print(f"Recreating missing proxy {pname}...", file=sys.stderr)
         self._proxy_runner.create_session_proxy(
@@ -436,7 +445,7 @@ class PodmanProxyManager:
         print(f"Creating proxy {pname}...", file=sys.stderr)
         try:
             self._write_credential_routes(
-                auth_vol, proxy_image, credential_domains or []
+                auth_vol, proxy_image, credential_domains or [], credentials
             )
             self._proxy_runner.create_session_proxy(
                 name=pname,

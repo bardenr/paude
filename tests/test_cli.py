@@ -1340,6 +1340,33 @@ class TestStartErrorReporting:
         assert "no such network" in result.output
 
 
+class TestConnectErrorReporting:
+    """Tests for surfacing the real error when a session fails to connect."""
+
+    @patch("paude.cli.commands.connect.find_session_backend")
+    def test_connect_reports_proxy_rebuild_error_cleanly(
+        self, mock_find_backend: MagicMock
+    ):
+        """A ValueError from proxy recreation is a one-line error, not a
+        traceback (e.g. a persisted --credential-domain spec that now
+        collides)."""
+        mock_backend = MagicMock()
+        mock_backend.connect_session.side_effect = ValueError(
+            "Credential domain 'anthropic=api.anthropic.com:443' routes "
+            "ANTHROPIC_API_KEY to host 'api.anthropic.com', which already "
+            "receives OPENAI_API_KEY via a built-in route."
+        )
+        mock_find_backend.return_value = ("podman", mock_backend)
+
+        result = runner.invoke(app, ["connect", "my-session"])
+
+        assert result.exit_code == 1
+        out = strip_ansi(result.output)
+        assert "Error connecting to session" in out
+        assert "a built-in route" in out
+        assert "Traceback" not in out
+
+
 class TestStopMultiBackend:
     """Tests for stop command searching multiple backends."""
 
@@ -2397,6 +2424,67 @@ class TestCreateEnvAndCredentialDomain:
         )
         assert result.exit_code == 1
         assert "does not configure" in strip_ansi(result.output)
+
+    def test_credential_domain_rejects_live_builtin_host(self, monkeypatch):
+        """A built-in route counts only when its credential is delivered."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "--providers",
+                "vertex,anthropic,openai",
+                "--credential-domain",
+                "anthropic=chatgpt.com",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 1
+        out = strip_ansi(result.output)
+        assert "a built-in route" in out
+        assert "first matching credential" in out
+
+    def test_credential_domain_allows_dead_builtin_host(self, monkeypatch):
+        """The proxy skips routes whose env var is unset, so a spec that
+        merely repeats one is redundant, not conflicting."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "--provider",
+                "anthropic",
+                "--credential-domain",
+                "anthropic=api.anthropic.com",
+                "--dry-run",
+            ],
+        )
+        out = strip_ansi(result.output)
+        assert result.exit_code == 0, out
+
+    def test_credential_domain_rejects_two_providers_on_one_host(self):
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "--providers",
+                "vertex,anthropic,openai",
+                "--credential-domain",
+                "anthropic=gw.example.com",
+                "--credential-domain",
+                "openai=gw.example.com",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "first matching credential" in strip_ansi(result.output)
+
+    def test_env_rejects_credential_name_case_variation(self):
+        result = runner.invoke(app, ["create", "--env", "github_token=x", "--dry-run"])
+        assert result.exit_code == 1
+        out = strip_ansi(result.output)
+        assert "stored in plaintext" in out
+        assert "PAUDE_GITHUB_TOKEN" in out
 
     def test_env_rejects_api_key(self):
         result = runner.invoke(

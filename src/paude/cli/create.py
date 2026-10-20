@@ -216,17 +216,32 @@ def session_create(
     r_allowed_domains: list[str] | None = (
         resolved.allowed_domains if resolved.allowed_domains else None
     )
+    from paude.backends.proxy_config import gather_proxy_credentials, local_gcp_adc_path
     from paude.endpoints import normalize_allowed_endpoints
     from paude.extra_env import parse_env_options
     from paude.proxy_credential_routes import (
         credential_domain_endpoints,
         parse_credential_domains,
+        validate_credential_domain_specs,
     )
 
     try:
         extra_env = parse_env_options(env_options)
         r_credential_domains = parse_credential_domains(
             credential_domain, resolved.providers
+        )
+        # Validate the routing table here so host collisions (two
+        # credentials on one host, including live built-in routes) fail at
+        # create time with this error handler, not later in proxy setup.
+        # The gathered credentials decide which built-in routes are live,
+        # mirroring the proxy, which skips routes whose env var is unset.
+        validate_credential_domain_specs(
+            r_credential_domains,
+            gather_proxy_credentials(
+                composition,
+                credential_providers=resolved.providers,
+                gcp_adc_path=local_gcp_adc_path(),
+            ),
         )
         r_allowed_endpoints = normalize_allowed_endpoints(
             resolved.allowed_endpoints

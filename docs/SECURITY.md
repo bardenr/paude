@@ -13,8 +13,8 @@ The container intentionally restricts certain operations:
 | SSH keys | not mounted | Prevents git push via SSH |
 | GitHub CLI config | not mounted | Prevents cached host credentials |
 | Codex ChatGPT OAuth tokens | never enter the agent's container; `codex login` runs inside the session, and the proxy sidecar keeps the real tokens and hands Codex synthetic ones | Codex's `auth.json` does hold the real ChatGPT account (workspace) ID. It is an identifier, not a credential, and Codex needs it for workspace routing discovery. The proxy still sets the `ChatGPT-Account-ID` header itself |
-| Provider API keys | never enter the agent's container; the agent sees a `paude-proxy-managed` sentinel | The proxy injects the real key only for the provider's own domains, plus any host named with `--credential-domain` at create time. Treat that host as trusted: it receives the key |
-| `--env` values | plain agent-container environment, visible via `inspect` | Not for secrets; provider credentials and paude-managed variables (proxy, CA trust, `PAUDE_*`) are rejected |
+| Provider API keys | never enter the agent's container; the agent sees a `paude-proxy-managed` sentinel | The proxy injects the real key only for the provider's own domains, plus any host named with `--credential-domain` at create time. Treat that host as trusted: it receives the key. Each host can carry only one provider's credential — a `--credential-domain` host that another spec or a live built-in route already claims is rejected (the proxy skips built-in routes whose credential the session does not hold) |
+| `--env` values | plain agent-container environment, visible via `inspect` | Not for secrets; provider credentials, well-known agent credentials (e.g. `GITHUB_TOKEN`, `ANTHROPIC_AUTH_TOKEN`, `GEMINI_API_KEY`), and paude-managed variables (proxy, CA trust, `PAUDE_*`) are rejected, with name matching case-insensitive |
 | `GH_TOKEN` (host) | never propagated | Set `PAUDE_GITHUB_TOKEN` before `create`/`start`; the real token goes only to the proxy sidecar, never the agent's container |
 | Git credentials | not mounted | Prevents HTTPS git push |
 

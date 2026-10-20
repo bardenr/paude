@@ -122,6 +122,18 @@ still lives only on the proxy sidecar; the agent sees the
 `paude-proxy-managed` sentinel. Both flags are recorded on the session and
 survive `start`, `allowed-domains` updates and `upgrade`.
 
+Each host can receive only one provider's credential — the proxy injects the
+first matching route, so routing two providers to the same host, or to a host
+a built-in route already feeds with a credential the session holds (the
+proxy skips routes whose env var is unset), is rejected at create time and
+on later proxy rebuilds. Give each provider its own gateway hostname (e.g.
+`anthropic-gw.example.com` and `openai-gw.example.com`).
+
+A gateway that requires `Authorization: Bearer` instead of `x-api-key`: use
+`--provider anthropic-oauth` with the token exported as
+`CLAUDE_CODE_OAUTH_TOKEN` and `--credential-domain anthropic-oauth=HOST`;
+the proxy injects it as a Bearer header.
+
 </details>
 
 <details>
@@ -504,8 +516,11 @@ paude create my-project --env ENABLE_TOOL_SEARCH=true --env MY_SETTING
 
 `--env` values are plain container environment, visible via
 `podman inspect`, so don't use it for secrets. Provider credentials (e.g.
-`ANTHROPIC_API_KEY`) and variables paude manages (proxy, CA trust, `PAUDE_*`)
-are rejected; credentials belong on the proxy via `--provider`.
+`ANTHROPIC_API_KEY`), well-known agent credentials (e.g. `GITHUB_TOKEN`,
+`ANTHROPIC_AUTH_TOKEN`, `GEMINI_API_KEY`) and variables paude manages
+(proxy, CA trust, `PAUDE_*`) are rejected — name matching is
+case-insensitive, so `github_token` is caught too. Credentials belong on
+the proxy via `--provider`.
 
 File copies also cross the SSH connection automatically. The local path is
 always resolved on the machine where you run `paude`:

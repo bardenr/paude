@@ -38,7 +38,8 @@ EnvOption = Annotated[
         "-e",
         help=(
             "Set an env var in the agent container as KEY=VALUE, or KEY "
-            "to copy the host value. Can be repeated. Not for secrets."
+            "to copy the host value. Can be repeated. Not for secrets: "
+            "credential names (e.g. GITHUB_TOKEN, any case) are rejected."
         ),
     ),
 ]
@@ -50,7 +51,9 @@ CredentialDomainOption = Annotated[
         help=(
             "Have the proxy also inject a provider's API key for a custom "
             "host, as PROVIDER=HOST[:PORT] (e.g. anthropic=gw.example.com). "
-            "The host is added to the allowlist. Can be repeated."
+            "The host is added to the allowlist. Can be repeated. Each "
+            "host can carry only one provider's credential; hosts with "
+            "built-in routes (e.g. api.anthropic.com) are rejected."
         ),
     ),
 ]

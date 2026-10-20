@@ -47,6 +47,50 @@ class TestParseEnvOptions:
 
     @pytest.mark.parametrize(
         "name",
+        [
+            "ANTHROPIC_AUTH_TOKEN",
+            "AZURE_API_KEY",
+            "CEREBRAS_API_KEY",
+            "CO_API_KEY",
+            "COHERE_API_KEY",
+            "GEMINI_API_KEY",
+            "GITHUB_COPILOT_TOKEN",
+            "GOOGLE_API_KEY",
+            "GITHUB_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN",
+            "OPENROUTER_API_KEY",
+            "MISTRAL_API_KEY",
+            "PERPLEXITY_API_KEY",
+            "TOGETHER_API_KEY",
+        ],
+    )
+    def test_rejects_agent_credentials(self, name: str) -> None:
+        with pytest.raises(ValueError, match="stored in plaintext"):
+            parse_env_options([f"{name}=x"], environ={})
+
+    def test_agent_credential_hint_for_gateway_token(self) -> None:
+        with pytest.raises(ValueError, match="anthropic-oauth"):
+            parse_env_options(["ANTHROPIC_AUTH_TOKEN=x"], environ={})
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "github_token",
+            "GITHUB_token",
+            "anthropic_auth_token",
+            "gemini_api_key",
+        ],
+    )
+    def test_rejects_agent_credentials_case_insensitively(self, name: str) -> None:
+        with pytest.raises(ValueError, match="stored in plaintext"):
+            parse_env_options([f"{name}=x"], environ={})
+
+    def test_rejects_proxy_held_credentials_case_insensitively(self) -> None:
+        with pytest.raises(ValueError, match="held by the proxy"):
+            parse_env_options(["anthropic_api_key=x"], environ={})
+
+    @pytest.mark.parametrize(
+        "name",
         ["HTTPS_PROXY", "https_proxy", "SSL_CERT_FILE", "GIT_CONFIG_GLOBAL", "PAUDE_X"],
     )
     def test_rejects_paude_managed(self, name: str) -> None:
@@ -54,10 +98,20 @@ class TestParseEnvOptions:
             parse_env_options([f"{name}=x"], environ={})
 
 
-def test_gh_token_hint_points_at_paude_github_token() -> None:
+@pytest.mark.parametrize("name", ["GH_TOKEN", "GITHUB_TOKEN", "gh_token"])
+def test_github_token_hint_points_at_paude_github_token(name: str) -> None:
     with pytest.raises(ValueError, match="PAUDE_GITHUB_TOKEN") as exc:
-        parse_env_options(["GH_TOKEN=x"], environ={})
+        parse_env_options([f"{name}=x"], environ={})
     assert "--credential-domain" not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "name", ["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "gh_enterprise_token"]
+)
+def test_github_enterprise_hint_states_the_limitation(name: str) -> None:
+    with pytest.raises(ValueError, match="api.github.com") as exc:
+        parse_env_options([f"{name}=x"], environ={})
+    assert "PAUDE_GITHUB_TOKEN" not in str(exc.value)
 
 
 def test_api_key_hint_points_at_credential_domain() -> None:

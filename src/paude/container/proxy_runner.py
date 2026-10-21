@@ -4,73 +4,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
 from secrets import token_hex
 
 from paude.container.engine import ContainerEngine
 from paude.container.proxy_inspect import ProxyInspectionError, ProxyInspector
+from paude.container.proxy_swap import ProxyStartError as ProxyStartError
+from paude.container.proxy_swap import ProxySwap as ProxySwap
 from paude.container.runner import ContainerRunner
-
-
-class ProxyStartError(Exception):
-    """Error starting the proxy container."""
-
-    pass
-
-
-@dataclass
-class ProxySwap:
-    """A started candidate proxy whose retained predecessor can be restored."""
-
-    runner: ContainerRunner
-    name: str
-    backup_name: str
-    network: str
-    ip: str | None
-    old_running: bool
-    old_renamed: bool = False
-    old_disconnected: bool = False
-    candidate_created: bool = False
-
-    def commit(self) -> None:
-        """Remove the retained predecessor after all update state is durable."""
-        self._run_checked("remove retained proxy", "rm", "-f", self.backup_name)
-
-    def rollback(self) -> None:
-        """Remove the candidate and restore the predecessor's identity/state."""
-        failures: list[str] = []
-        if self.candidate_created:
-            self._try(failures, "remove candidate proxy", "rm", "-f", self.name)
-        if self.old_disconnected:
-            args = ["network", "connect"]
-            if self.ip:
-                args.extend(["--ip", self.ip])
-            args.extend([self.network, self.backup_name])
-            self._try(failures, "reconnect retained proxy", *args)
-        if self.old_renamed:
-            self._try(
-                failures,
-                "restore retained proxy name",
-                "rename",
-                self.backup_name,
-                self.name,
-            )
-        if self.old_running:
-            self._try(failures, "restart retained proxy", "start", self.name)
-        if failures:
-            raise ProxyStartError("; ".join(failures))
-
-    def _try(self, failures: list[str], operation: str, *args: str) -> None:
-        try:
-            self._run_checked(operation, *args)
-        except ProxyStartError as exc:
-            failures.append(str(exc))
-
-    def _run_checked(self, operation: str, *args: str) -> None:
-        result = self.runner.engine.run(*args, check=False)
-        if result.returncode != 0:
-            detail = result.stderr.strip() or "container engine command failed"
-            raise ProxyStartError(f"Failed to {operation}: {detail}")
 
 
 class ProxyRunner:
@@ -336,8 +276,12 @@ class ProxyRunner:
         secret_refs: list[str] | None = None,
         credential_env: Mapping[str, str] | None = None,
         auth_volume: str | None = None,
+        keep_running_for: str | None = None,
     ) -> ProxySwap:
-        """Start a replacement while retaining the old proxy for rollback."""
+        """Start a replacement while retaining the old proxy for rollback.
+
+        See :meth:`ProxySwap.commit` for ``keep_running_for``.
+        """
         swap = ProxySwap(
             runner=self._runner,
             name=name,
@@ -345,6 +289,7 @@ class ProxyRunner:
             network=network,
             ip=ip,
             old_running=self._runner.container_running(name),
+            keep_running_for=keep_running_for,
         )
         try:
             if swap.old_running:

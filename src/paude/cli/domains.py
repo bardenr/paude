@@ -9,35 +9,8 @@ import typer
 from paude.backends import SessionNotFoundError
 from paude.backends.base import Backend
 from paude.cli.app import BackendType, app
-from paude.cli.helpers import _get_backend_instance, find_session_backend
+from paude.cli.helpers import resolve_session_backend
 from paude.proxy_log import parse_blocked_log
-
-
-def _resolve_backend_for_domains(
-    name: str,
-    backend: BackendType | None,
-) -> Backend:
-    """Resolve the backend instance for allowed-domains command.
-
-    Args:
-        name: Session name.
-        backend: Explicit backend type, or None for auto-detect.
-
-    Returns:
-        Backend instance.
-
-    Raises:
-        typer.Exit: If session not found or backend not supported.
-    """
-    if backend is None:
-        result = find_session_backend(name)
-        if result is None:
-            typer.echo(f"Session '{name}' not found.", err=True)
-            raise typer.Exit(1)
-        _, backend_obj = result
-        return backend_obj
-
-    return _get_backend_instance(backend)
 
 
 def _check_domains_mutual_exclusivity(
@@ -101,13 +74,7 @@ def _list_domains(backend_obj: Backend, name: str) -> None:
             typer.echo(f"  {domain}")
 
 
-def _add_domains(
-    backend_obj: Backend,
-    name: str,
-    add: list[str],
-    *,
-    refresh_credentials: bool = False,
-) -> None:
+def _add_domains(backend_obj: Backend, name: str, add: list[str]) -> None:
     """Add domains to the current allowed list.
 
     Args:
@@ -133,20 +100,12 @@ def _add_domains(
             merged.append(d)
             seen.add(d)
 
-    backend_obj.update_allowed_domains(
-        name, merged, refresh_credentials=refresh_credentials
-    )
+    backend_obj.update_allowed_domains(name, merged)
     added_count = len(merged) - len(current)
     typer.echo(f"Added {added_count} domain(s) to session '{name}'.")
 
 
-def _remove_domains(
-    backend_obj: Backend,
-    name: str,
-    remove: list[str],
-    *,
-    refresh_credentials: bool = False,
-) -> None:
+def _remove_domains(backend_obj: Backend, name: str, remove: list[str]) -> None:
     """Remove domains from the current allowed list.
 
     Args:
@@ -174,20 +133,12 @@ def _remove_domains(
         )
         raise typer.Exit(1)
 
-    backend_obj.update_allowed_domains(
-        name, remaining, refresh_credentials=refresh_credentials
-    )
+    backend_obj.update_allowed_domains(name, remaining)
     removed_count = len(current) - len(remaining)
     typer.echo(f"Removed {removed_count} domain(s) from session '{name}'.")
 
 
-def _replace_domains(
-    backend_obj: Backend,
-    name: str,
-    replace: list[str],
-    *,
-    refresh_credentials: bool = False,
-) -> None:
+def _replace_domains(backend_obj: Backend, name: str, replace: list[str]) -> None:
     """Replace all domains for a session.
 
     Args:
@@ -196,9 +147,7 @@ def _replace_domains(
         replace: New domain list.
     """
     expanded = _expand_domains_or_exit(replace)
-    backend_obj.update_allowed_domains(
-        name, expanded, refresh_credentials=refresh_credentials
-    )
+    backend_obj.update_allowed_domains(name, expanded)
     typer.echo(f"Replaced domains for session '{name}' ({len(expanded)} domain(s)).")
 
 
@@ -226,48 +175,29 @@ def allowed_domains_cmd(
     ] = None,
     refresh_credentials: Annotated[
         bool,
-        typer.Option(
-            "--refresh-credentials",
-            help=(
-                "Replace proxy credentials supplied by the current host "
-                "environment; preserve all other bindings."
-            ),
-        ),
+        typer.Option("--refresh-credentials", hidden=True),
     ] = False,
 ) -> None:
     """Manage allowed egress domains for a session."""
     _check_domains_mutual_exclusivity(add, remove, replace)
-    if refresh_credentials and not any((add, remove, replace)):
+    if refresh_credentials:
         typer.echo(
-            "Error: --refresh-credentials requires --add, --remove, or --replace.",
+            "Error: --refresh-credentials was removed. Run "
+            f"'paude refresh-credentials {name}' to list the session's "
+            "credentials, then name the ones to rebind.",
             err=True,
         )
         raise typer.Exit(1)
 
-    backend_obj = _resolve_backend_for_domains(name, backend)
+    backend_obj = resolve_session_backend(name, backend)
 
     try:
         if add:
-            _add_domains(
-                backend_obj,
-                name,
-                add,
-                refresh_credentials=refresh_credentials,
-            )
+            _add_domains(backend_obj, name, add)
         elif remove:
-            _remove_domains(
-                backend_obj,
-                name,
-                remove,
-                refresh_credentials=refresh_credentials,
-            )
+            _remove_domains(backend_obj, name, remove)
         elif replace:
-            _replace_domains(
-                backend_obj,
-                name,
-                replace,
-                refresh_credentials=refresh_credentials,
-            )
+            _replace_domains(backend_obj, name, replace)
         else:
             _list_domains(backend_obj, name)
     except NotImplementedError as e:
@@ -300,7 +230,7 @@ def blocked_domains_cmd(
     ] = None,
 ) -> None:
     """Show domains blocked by the proxy for a session."""
-    backend_obj = _resolve_backend_for_domains(name, backend)
+    backend_obj = resolve_session_backend(name, backend)
 
     try:
         log_content = backend_obj.get_proxy_blocked_log(name)

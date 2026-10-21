@@ -41,6 +41,14 @@ STUB_ADC_JSON = (
 )
 
 PROXY_GCP_ADC_ENV = "GCP_ADC_JSON"
+PROXY_GITHUB_ENV = "GH_TOKEN"
+GCP_ADC_SOURCE = "gcp-adc"
+
+# Host-side source for proxy targets not read from a same-named env var.
+_HOST_SOURCE_BY_TARGET = {
+    PROXY_GITHUB_ENV: "PAUDE_GITHUB_TOKEN",
+    PROXY_GCP_ADC_ENV: GCP_ADC_SOURCE,
+}
 
 # Codex ChatGPT OAuth is fully proxy-managed and file-free on paude's side.
 # paude only signals that a session wants ChatGPT-plan mode via
@@ -136,43 +144,68 @@ def gather_proxy_credentials(
     Returns:
         Dict of environment variables for the proxy container.
     """
-    from paude.agents.base import build_secret_environment_from_config
-    from paude.providers import get_provider
-
-    if hasattr(agent_config, "agents"):
-        configs = [agent.config for agent in agent_config.agents]
-    elif hasattr(agent_config, "config"):
-        configs = [agent_config.config]
-    else:
-        configs = [agent_config]
+    effective_providers = _effective_providers(agent_config, credential_providers)
+    targets = session_proxy_credential_targets(agent_config, credential_providers)
 
     creds: dict[str, str] = {}
-    for config in configs:
-        for key, value in build_secret_environment_from_config(config).items():
-            creds.setdefault(key, value)
+    for key in sorted(targets - {PROXY_GCP_ADC_ENV}):
+        env_value = os.environ.get(proxy_credential_source(key))
+        if env_value:
+            creds[key] = env_value
 
-    effective_providers = credential_providers or list(
-        dict.fromkeys(config.provider for config in configs if config.provider)
-    )
-    for provider_name in effective_providers:
-        provider = get_provider(provider_name)
-        for key in provider.secret_env_vars:
-            env_value = os.environ.get(key)
-            if env_value:
-                creds.setdefault(key, env_value)
-
-    gh_token = os.environ.get("PAUDE_GITHUB_TOKEN")
-    if gh_token:
-        creds["GH_TOKEN"] = gh_token
-
-    if gcp_adc_path is not None and any(
-        provider in {"vertex", "google"} for provider in effective_providers
-    ):
+    if gcp_adc_path is not None and PROXY_GCP_ADC_ENV in targets:
         creds[PROXY_GCP_ADC_ENV] = gcp_adc_path.read_text()
 
     chatgpt_oauth_mode = "chatgpt" in effective_providers
 
     return ProxyCredentials(environment=creds, chatgpt_oauth_mode=chatgpt_oauth_mode)
+
+
+def proxy_credential_source(target: str) -> str:
+    """Return the host-side name a user supplies for a proxy target."""
+    return _HOST_SOURCE_BY_TARGET.get(target, target)
+
+
+def session_proxy_credential_targets(
+    agent_config: AgentConfig | AgentComposition | Agent,
+    credential_providers: list[str] | None = None,
+) -> set[str]:
+    """Return the credential targets this session gathers from the host.
+
+    Unlike :func:`proxy_credential_targets`, which lists every binding paude
+    may preserve, this is limited to the session's own agents and providers.
+    """
+    providers = _effective_providers(agent_config, credential_providers)
+    targets = {PROXY_GITHUB_ENV}
+    targets.update(
+        key for config in _agent_configs(agent_config) for key in config.secret_env_vars
+    )
+    targets.update(_provider_secret_targets(providers))
+    if any(provider in {"vertex", "google"} for provider in providers):
+        targets.add(PROXY_GCP_ADC_ENV)
+    return targets
+
+
+def _provider_secret_targets(providers: list[str]) -> set[str]:
+    """Return the secret env vars the given providers bind through the proxy."""
+    from paude.providers import get_provider
+
+    return {
+        key
+        for provider_name in providers
+        for key in get_provider(provider_name).secret_env_vars
+    }
+
+
+def _effective_providers(
+    agent_config: AgentConfig | AgentComposition | Agent,
+    credential_providers: list[str] | None,
+) -> list[str]:
+    """Return explicit providers, else the providers the agents configure."""
+    if credential_providers:
+        return credential_providers
+    configs = _agent_configs(agent_config)
+    return list(dict.fromkeys(config.provider for config in configs if config.provider))
 
 
 def proxy_credential_targets(
@@ -201,7 +234,7 @@ def all_proxy_credential_env_vars() -> set[str]:
     from paude.providers import get_provider, list_providers
     from paude.providers.agent_providers import AGENT_PROVIDERS
 
-    targets = {"GH_TOKEN", PROXY_GCP_ADC_ENV}
+    targets = {PROXY_GITHUB_ENV, PROXY_GCP_ADC_ENV}
     targets.update(
         key
         for provider_name in list_providers()
@@ -223,11 +256,7 @@ def required_proxy_credential_targets(
     """Return credential targets required by the active authentication modes."""
     from paude.providers import get_provider
 
-    provider_targets = {
-        key
-        for provider_name in credential_providers
-        for key in get_provider(provider_name).secret_env_vars
-    }
+    provider_targets = _provider_secret_targets(credential_providers)
     required = {
         key
         for provider_name in credential_providers

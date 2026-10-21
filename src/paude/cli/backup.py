@@ -199,11 +199,7 @@ def session_backup(
     from paude.backends import PodmanBackend
     from paude.backends.podman.helpers import volume_name
     from paude.backends.podman.volume_archive import VolumeArchiver
-    from paude.cli.helpers import (
-        _auto_select_session,
-        _get_backend_instance,
-        find_session_backend,
-    )
+    from paude.cli.helpers import _auto_select_session, resolve_session_backend
 
     # Resolve the session + backend (mirrors stop/cp conventions).
     if name is None:
@@ -215,14 +211,8 @@ def session_backup(
             multi_hint_format="  paude backup {name}  # {backend_type}",
         )
         name = session.name
-    elif backend is not None:
-        backend_obj = _get_backend_instance(backend)
     else:
-        result = find_session_backend(name)
-        if result is None:
-            typer.echo(f"Session '{name}' not found.", err=True)
-            raise typer.Exit(1)
-        _, backend_obj = result
+        backend_obj = resolve_session_backend(name, backend)
 
     if not isinstance(backend_obj, PodmanBackend):
         typer.echo("Unsupported backend for backup.", err=True)

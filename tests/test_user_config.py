@@ -29,14 +29,10 @@ class TestLoadUserDefaults:
     def test_loads_allowed_endpoints(self, tmp_path: Path) -> None:
         config = tmp_path / "defaults.json"
         config.write_text(
-            json.dumps(
-                {"defaults": {"allowed-endpoints": ["api.example.com:8443"]}}
-            )
+            json.dumps({"defaults": {"allowed-endpoints": ["api.example.com:8443"]}})
         )
 
-        assert load_user_defaults(config).allowed_endpoints == [
-            "api.example.com:8443"
-        ]
+        assert load_user_defaults(config).allowed_endpoints == ["api.example.com:8443"]
 
     def test_warns_on_unknown_keys(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -132,9 +128,7 @@ class TestResolveCreateOptions:
 
     def test_endpoints_merge_and_cli_override(self) -> None:
         user = UserDefaults(allowed_endpoints=["user.example:8000"])
-        project = PaudeConfig(
-            create_allowed_endpoints=["project.example:9000"]
-        )
+        project = PaudeConfig(create_allowed_endpoints=["project.example:9000"])
 
         merged = self._resolve(user_defaults=user, project_config=project)
         assert merged.allowed_endpoints == [

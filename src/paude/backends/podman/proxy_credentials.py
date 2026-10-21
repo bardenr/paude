@@ -11,6 +11,7 @@ from paude.backends.proxy_config import (
     PROXY_CHATGPT_AUTH_STATE_ENV,
     ProxyCredentials,
 )
+from paude.backends.proxy_credential_refresh import describe_missing_credentials
 from paude.container.proxy_inspect import ProxyInspectionError, ProxyInspector
 from paude.container.runner import ContainerRunner
 
@@ -23,6 +24,23 @@ class PreparedProxyCredentials:
     secret_refs: list[str] = field(default_factory=list)
     staged_secrets: list[str] = field(default_factory=list)
     superseded_secrets: list[str] = field(default_factory=list)
+
+    def bound_names(self) -> ProxyCredentials:
+        """Names (with blank values) of every credential the proxy will carry.
+
+        Covers both preserved secret bindings and plain env credentials, plus
+        the ChatGPT-OAuth mode signal, for checks that need only the names.
+        """
+        names = set(self.credentials.environment)
+        names.update(
+            target
+            for ref in self.secret_refs
+            if (target := ProxyCredentialManager._secret_target(ref))
+        )
+        return ProxyCredentials(
+            environment=dict.fromkeys(names, ""),
+            chatgpt_oauth_mode=self.credentials.chatgpt_oauth_mode,
+        )
 
 
 class ProxyCredentialManager:
@@ -81,6 +99,21 @@ class ProxyCredentialManager:
         for sname in names:
             self._runner.remove_secret(sname)
 
+    def bound_targets(self, proxy_name: str, credential_targets: set[str]) -> set[str]:
+        """Return the credential targets currently bound on the proxy.
+
+        Podman proxies bind credentials as secrets; Docker proxies carry them
+        as plain env vars, so only ``credential_targets`` are considered there.
+        """
+        if self._runner.engine.supports_secrets:
+            targets = (
+                self._secret_target(ref)
+                for ref in self._inspector.secret_refs(proxy_name)
+            )
+            return {target for target in targets if target is not None}
+        environment = self._inspector.environment(proxy_name)
+        return {target for target in credential_targets if target in environment}
+
     def prepare_update(
         self,
         session_name: str,
@@ -99,7 +132,9 @@ class ProxyCredentialManager:
         environment = self._inspector.environment(proxy_name)
         preserved = {key: environment[key] for key in targets if key in environment}
         preserved.update(refresh.environment)
-        self._require_targets(set(preserved), required_targets)
+        self._require_targets(
+            set(preserved), required_targets, session_name, set(refresh.environment)
+        )
         return PreparedProxyCredentials(
             credentials=ProxyCredentials(
                 environment=preserved,
@@ -129,7 +164,10 @@ class ProxyCredentialManager:
             names_by_target[target] = ref.split(",", 1)[0]
 
         self._require_targets(
-            set(refs_by_target) | set(refresh.environment), required_targets
+            set(refs_by_target) | set(refresh.environment),
+            required_targets,
+            session_name,
+            set(refresh.environment),
         )
 
         staged: list[str] = []
@@ -180,12 +218,14 @@ class ProxyCredentialManager:
         return None
 
     @staticmethod
-    def _require_targets(present: set[str], required: set[str]) -> None:
-        missing = sorted(required - present)
+    def _require_targets(
+        present: set[str],
+        required: set[str],
+        session_name: str,
+        refreshing: set[str],
+    ) -> None:
+        missing = required - present
         if missing:
-            names = ", ".join(missing)
             raise ValueError(
-                "Cannot update proxy domains because required credential "
-                f"bindings are missing: {names}. Supply them and use "
-                "--refresh-credentials."
+                describe_missing_credentials(missing, session_name, refreshing)
             )

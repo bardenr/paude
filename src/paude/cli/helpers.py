@@ -124,6 +124,21 @@ def _get_backend_instance(
     return PodmanBackend(engine=engine)
 
 
+def resolve_session_backend(name: str, backend: BackendType | None) -> Backend:
+    """Resolve the explicitly selected or session-owning backend.
+
+    Raises:
+        typer.Exit: If no backend is given and the session is not found.
+    """
+    if backend is not None:
+        return _get_backend_instance(backend)
+    result = find_session_backend(name)
+    if result is None:
+        typer.echo(f"Session '{name}' not found.", err=True)
+        raise typer.Exit(1)
+    return result[1]
+
+
 def _auto_select_session(
     *,
     status_filter: str | None = None,

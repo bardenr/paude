@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from paude.agents.base import AgentComposition
 from paude.backends.base import Session, SessionConfig
@@ -40,6 +40,8 @@ from paude.backends.podman.proxy import PodmanProxyManager
 from paude.backends.podman.resources import SessionResources
 from paude.backends.podman.session_setup import SessionSetup
 from paude.backends.port_forward_utils import ForwardPort, merge_forward_ports
+from paude.backends.proxy_config import ProxyCredentials
+from paude.backends.proxy_credential_refresh import ProxyCredentialStatus
 from paude.constants import (
     CONTAINER_ENTRYPOINT,
 )
@@ -50,6 +52,16 @@ from paude.container.volume import VolumeManager
 
 if TYPE_CHECKING:
     from paude.agents.base import Agent
+
+
+class _ProxyUpdateContext(NamedTuple):
+    """Credential overlay and binding targets for a proxy swap."""
+
+    credentials: ProxyCredentials
+    credential_targets: set[str]
+    required_credentials: set[str]
+    composition: AgentComposition
+    providers: list[str]
 
 
 class PodmanBackend:
@@ -425,62 +437,118 @@ class PodmanBackend:
         require_session(self._runner, name)
         return self._proxy.get_blocked_log(name)
 
-    def update_allowed_domains(
-        self,
-        name: str,
-        domains: list[str],
-        *,
-        refresh_credentials: bool = False,
-    ) -> None:
-        """Update allowed domains for a session."""
+    def _require_session_proxy(self, name: str, operation_label: str) -> None:
+        """Fail fast, before any credential is gathered, if there's no proxy."""
         require_session(self._runner, name)
+        self._proxy.require_proxy(name, operation_label)
+
+    def _proxy_update_context(self, name: str) -> _ProxyUpdateContext:
+        """Gather the binding targets shared by proxy updates.
+
+        ``credentials`` carries no values: updates preserve every current
+        binding unless a refresh overlays named ones.
+        """
         composition = get_session_composition(self._runner, name)
         from paude.backends.podman.helpers import get_session_credential_providers
         from paude.backends.proxy_config import (
-            ProxyCredentials,
             proxy_credential_targets,
             required_proxy_credential_targets,
         )
 
         providers = get_session_credential_providers(self._runner, name)
-        refresh = (
-            self._setup.gather_proxy_credentials(composition, providers)
-            if refresh_credentials
-            else ProxyCredentials(chatgpt_oauth_mode="chatgpt" in providers)
-        )
-        self._proxy.update_domains(
-            name,
-            domains,
-            credentials=refresh,
+        return _ProxyUpdateContext(
+            credentials=ProxyCredentials(chatgpt_oauth_mode="chatgpt" in providers),
             credential_targets=proxy_credential_targets(composition),
             required_credentials=required_proxy_credential_targets(
                 composition, providers
             ),
+            composition=composition,
+            providers=providers,
         )
+
+    def update_allowed_domains(self, name: str, domains: list[str]) -> None:
+        """Update allowed domains for a session."""
+        self._require_session_proxy(name, "domains")
+        ctx = self._proxy_update_context(name)
+        self._proxy.update_domains(
+            name,
+            domains,
+            credentials=ctx.credentials,
+            credential_targets=ctx.credential_targets,
+            required_credentials=ctx.required_credentials,
+        )
+
+    def list_proxy_credentials(self, name: str) -> list[ProxyCredentialStatus] | None:
+        """List the session's proxy credentials by host-side name."""
+        from paude.backends.proxy_config import session_proxy_credential_targets
+        from paude.backends.proxy_credential_refresh import credential_statuses
+
+        require_session(self._runner, name)
+        if not self._proxy.has_proxy(name):
+            return None
+        ctx = self._proxy_update_context(name)
+        return credential_statuses(
+            session_proxy_credential_targets(ctx.composition, ctx.providers),
+            self._proxy.bound_credential_targets(name, ctx.credential_targets),
+            adc_available=self._setup.local_adc_path() is not None,
+        )
+
+    def refresh_proxy_credentials(self, name: str, names: list[str]) -> list[str]:
+        """Rebind the named proxy credentials from the host environment."""
+        from paude.backends.proxy_config import (
+            GCP_ADC_SOURCE,
+            proxy_credential_source,
+            session_proxy_credential_targets,
+        )
+        from paude.backends.proxy_credential_refresh import (
+            check_refresh_names,
+            select_refresh_credentials,
+        )
+
+        self._require_session_proxy(name, "credentials")
+        # Report an upgrade-required session before any credential error.
+        proxy_image = self._proxy.policy_update_proxy_image(
+            name, "refreshing credentials"
+        )
+        ctx = self._proxy_update_context(name)
+        session_targets = session_proxy_credential_targets(
+            ctx.composition, ctx.providers
+        )
+        # Reject bad names before reading any host credential.
+        names = check_refresh_names(names, ctx.credential_targets, session_targets)
+        # The ADC file may belong to another account; read it only when named.
+        gathered = self._setup.gather_proxy_credentials(
+            ctx.composition, ctx.providers, include_adc=GCP_ADC_SOURCE in names
+        )
+        credentials = select_refresh_credentials(
+            gathered, ctx.credential_targets, session_targets, names
+        )
+        self._proxy.update_domains(
+            name,
+            None,
+            credentials=credentials,
+            credential_targets=ctx.credential_targets,
+            required_credentials=ctx.required_credentials,
+            proxy_image=proxy_image,
+            operation_label="credentials",
+        )
+        return sorted(proxy_credential_source(target) for target in credentials)
 
     def update_allowed_endpoints(self, name: str, endpoints: list[str]) -> None:
         """Update destination-scoped port exceptions for a session."""
         from paude.endpoints import normalize_allowed_endpoints
 
         endpoints = normalize_allowed_endpoints(endpoints)
-        require_session(self._runner, name)
-        composition = get_session_composition(self._runner, name)
-        from paude.backends.podman.helpers import get_session_credential_providers
-        from paude.backends.proxy_config import (
-            ProxyCredentials,
-            proxy_credential_targets,
-            required_proxy_credential_targets,
-        )
-
-        providers = get_session_credential_providers(self._runner, name)
+        self._require_session_proxy(name, "endpoints")
+        proxy_image = self._proxy.policy_update_proxy_image(name, "changing endpoints")
+        ctx = self._proxy_update_context(name)
         self._proxy.update_endpoints(
             name,
             endpoints,
-            credentials=ProxyCredentials(chatgpt_oauth_mode="chatgpt" in providers),
-            credential_targets=proxy_credential_targets(composition),
-            required_credentials=required_proxy_credential_targets(
-                composition, providers
-            ),
+            credentials=ctx.credentials,
+            credential_targets=ctx.credential_targets,
+            required_credentials=ctx.required_credentials,
+            proxy_image=proxy_image,
         )
 
     def exec_in_session(self, name: str, command: str) -> tuple[int, str, str]:

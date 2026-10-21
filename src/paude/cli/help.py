@@ -141,8 +141,12 @@ _SECTIONS: tuple[HelpSection, ...] = (
                 "Replace entire list",
             ),
             (
-                "paude allowed-domains NAME --add .example.com --refresh-credentials",
-                "Update domains and refresh supplied credentials",
+                "paude refresh-credentials NAME",
+                "List the session's proxy credentials",
+            ),
+            (
+                "paude refresh-credentials NAME PAUDE_GITHUB_TOKEN",
+                "Rebind (or attach) the named credential from host env",
             ),
             (
                 "paude allowed-endpoints NAME --add api.example.com:8443",
@@ -155,9 +159,11 @@ _SECTIONS: tuple[HelpSection, ...] = (
             "Domain and endpoint updates preserve the other policy list and the"
             " proxy's current credential bindings. Replacement is fail-closed:"
             " the old proxy is"
-            " restored if the candidate cannot start or commit. Use"
-            " --refresh-credentials only when fresh replacement values are present"
-            " in the current environment; unrelated bindings remain attached."
+            " restored if the candidate cannot start or commit. To rotate a"
+            " credential (e.g. PAUDE_GITHUB_TOKEN), export the new value and run"
+            " refresh-credentials with its name; only named credentials are"
+            " rebound, and domains, endpoints, and other bindings are preserved."
+            " Use gcp-adc to rebind the local gcloud ADC file."
             " Endpoint hosts outside allowed-domains remain blocked and produce an"
             " actionable warning."
         ),

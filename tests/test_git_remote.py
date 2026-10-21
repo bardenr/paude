@@ -805,9 +805,7 @@ class TestGitFetchFromRemote:
         mock_run.return_value.returncode = 0
         mock_run.return_value.stderr = ""
 
-        result = git_fetch_from_remote(
-            "paude-test", source_ref="refs/tags/v1.0"
-        )
+        result = git_fetch_from_remote("paude-test", source_ref="refs/tags/v1.0")
 
         assert result is True
         assert mock_run.call_args[0][0] == [

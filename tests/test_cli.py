@@ -1957,34 +1957,8 @@ class TestCpCommand:
 class TestAllowedDomainsCLI:
     """Tests for credential-safe allowed-domain mutation options."""
 
-    @patch("paude.cli.domains._resolve_backend_for_domains")
-    def test_refresh_credentials_is_explicitly_forwarded(
-        self, mock_resolve: MagicMock
-    ) -> None:
-        backend = MagicMock()
-        backend.get_allowed_domains.return_value = [".pypi.org"]
-        mock_resolve.return_value = backend
-
-        result = runner.invoke(
-            app,
-            [
-                "allowed-domains",
-                "my-session",
-                "--add",
-                ".example.com",
-                "--refresh-credentials",
-            ],
-        )
-
-        assert result.exit_code == 0
-        backend.update_allowed_domains.assert_called_once_with(
-            "my-session",
-            [".pypi.org", ".example.com"],
-            refresh_credentials=True,
-        )
-
-    @patch("paude.cli.domains._resolve_backend_for_domains")
-    def test_domain_mutation_preserves_credentials_by_default(
+    @patch("paude.cli.domains.resolve_session_backend")
+    def test_domain_mutation_preserves_credentials(
         self, mock_resolve: MagicMock
     ) -> None:
         backend = MagicMock()
@@ -1997,35 +1971,144 @@ class TestAllowedDomainsCLI:
 
         assert result.exit_code == 0
         backend.update_allowed_domains.assert_called_once_with(
-            "my-session",
-            [".pypi.org", ".example.com"],
-            refresh_credentials=False,
+            "my-session", [".pypi.org", ".example.com"]
         )
 
-    @patch("paude.cli.domains._resolve_backend_for_domains")
-    def test_refresh_credentials_requires_a_mutation(
+    @patch("paude.cli.domains.resolve_session_backend")
+    def test_removed_refresh_credentials_points_to_new_command(
         self, mock_resolve: MagicMock
     ) -> None:
         result = runner.invoke(
-            app, ["allowed-domains", "my-session", "--refresh-credentials"]
+            app,
+            [
+                "allowed-domains",
+                "my-session",
+                "--add",
+                ".example.com",
+                "--refresh-credentials",
+            ],
         )
 
         assert result.exit_code == 1
         output = result.stdout + (result.stderr or "")
-        assert "requires --add, --remove, or --replace" in output
+        assert "--refresh-credentials was removed" in output
+        assert "paude refresh-credentials my-session" in output
         mock_resolve.assert_not_called()
 
-    def test_help_documents_refresh_credentials(self) -> None:
+    def test_help_hides_refresh_credentials(self) -> None:
         result = runner.invoke(app, ["allowed-domains", "--help"])
 
         assert result.exit_code == 0
-        assert "--refresh-credentials" in strip_ansi(result.stdout)
+        assert "--refresh-credentials" not in strip_ansi(result.stdout)
+
+
+class TestRefreshCredentialsCLI:
+    """Tests for the refresh-credentials subcommand."""
+
+    @patch("paude.cli.credentials.resolve_session_backend")
+    def test_named_credentials_are_refreshed(self, mock_resolve: MagicMock) -> None:
+        backend = MagicMock()
+        backend.refresh_proxy_credentials.return_value = [
+            "PAUDE_GITHUB_TOKEN",
+            "gcp-adc",
+        ]
+        mock_resolve.return_value = backend
+
+        result = runner.invoke(
+            app,
+            ["refresh-credentials", "my-session", "PAUDE_GITHUB_TOKEN", "gcp-adc"],
+        )
+
+        assert result.exit_code == 0
+        backend.refresh_proxy_credentials.assert_called_once_with(
+            "my-session", ["PAUDE_GITHUB_TOKEN", "gcp-adc"]
+        )
+        backend.update_allowed_domains.assert_not_called()
+        assert "my-session': PAUDE_GITHUB_TOKEN, gcp-adc" in result.stdout
+
+    @patch("paude.cli.credentials.resolve_session_backend")
+    def test_no_names_lists_without_refreshing(self, mock_resolve: MagicMock) -> None:
+        from paude.backends.proxy_credential_refresh import ProxyCredentialStatus
+
+        backend = MagicMock()
+        backend.list_proxy_credentials.return_value = [
+            ProxyCredentialStatus("ANTHROPIC_API_KEY", bound=True, available=False),
+            ProxyCredentialStatus("PAUDE_GITHUB_TOKEN", bound=False, available=True),
+        ]
+        mock_resolve.return_value = backend
+
+        result = runner.invoke(app, ["refresh-credentials", "my-session"])
+
+        assert result.exit_code == 0
+        backend.refresh_proxy_credentials.assert_not_called()
+        lines = result.stdout.splitlines()
+        assert "nothing was changed" in lines[0]
+        assert lines[1].split() == [
+            "ANTHROPIC_API_KEY",
+            "on",
+            "proxy",
+            "not",
+            "set",
+            "on",
+            "host",
+        ]
+        assert "PAUDE_GITHUB_TOKEN  not on proxy  available on host" in lines[2]
+        assert "paude refresh-credentials my-session NAME..." in result.stdout
+
+    @patch("paude.cli.credentials.resolve_session_backend")
+    def test_no_names_without_proxy_says_so(self, mock_resolve: MagicMock) -> None:
+        backend = MagicMock()
+        backend.list_proxy_credentials.return_value = None
+        mock_resolve.return_value = backend
+
+        result = runner.invoke(app, ["refresh-credentials", "my-session"])
+
+        assert result.exit_code == 0
+        assert "has no proxy" in result.stdout
+
+    @patch("paude.cli.credentials.resolve_session_backend")
+    def test_value_error_exits_nonzero(self, mock_resolve: MagicMock) -> None:
+        backend = MagicMock()
+        backend.refresh_proxy_credentials.side_effect = ValueError(
+            "Not found in the current environment: PAUDE_GITHUB_TOKEN."
+        )
+        mock_resolve.return_value = backend
+
+        result = runner.invoke(
+            app, ["refresh-credentials", "my-session", "PAUDE_GITHUB_TOKEN"]
+        )
+
+        assert result.exit_code == 1
+        output = result.stdout + (result.stderr or "")
+        assert "Not found in the current environment" in output
+
+    def test_only_option_is_gone(self) -> None:
+        result = runner.invoke(
+            app, ["refresh-credentials", "my-session", "--only", "gcp-adc"]
+        )
+
+        assert result.exit_code != 0
+
+    def test_help_shows_refresh_credentials(self) -> None:
+        result = runner.invoke(app, ["--help"])
+
+        assert result.exit_code == 0
+        assert "refresh-credentials" in strip_ansi(result.stdout)
+
+    def test_subcommand_help(self) -> None:
+        result = runner.invoke(app, ["refresh-credentials", "--help"])
+
+        assert result.exit_code == 0
+        output = strip_ansi(result.stdout)
+        assert "PAUDE_GITHUB_TOKEN" in output
+        assert "gcp-adc" in output
+        assert "--only" not in output
 
 
 class TestAllowedEndpointsCLI:
     """Tests for exact endpoint list management."""
 
-    @patch("paude.cli.endpoints._resolve_backend")
+    @patch("paude.cli.endpoints.resolve_session_backend")
     def test_add_normalizes_and_preserves_existing_rules(
         self, mock_resolve: MagicMock
     ) -> None:
@@ -2048,7 +2131,7 @@ class TestAllowedEndpointsCLI:
             "my-session", ["old.example:8000", "api.example:8443"]
         )
 
-    @patch("paude.cli.endpoints._resolve_backend")
+    @patch("paude.cli.endpoints.resolve_session_backend")
     def test_invalid_endpoint_does_not_mutate_proxy(
         self, mock_resolve: MagicMock
     ) -> None:
@@ -2065,7 +2148,7 @@ class TestAllowedEndpointsCLI:
         assert "Invalid allowed endpoint" in result.output
         backend.update_allowed_endpoints.assert_not_called()
 
-    @patch("paude.cli.endpoints._resolve_backend")
+    @patch("paude.cli.endpoints.resolve_session_backend")
     def test_operations_are_mutually_exclusive(self, mock_resolve: MagicMock) -> None:
         result = runner.invoke(
             app,
@@ -2087,7 +2170,7 @@ class TestAllowedEndpointsCLI:
 class TestBlockedDomainsCLI:
     """Tests for the blocked-domains CLI subcommand."""
 
-    @patch("paude.cli.domains._resolve_backend_for_domains")
+    @patch("paude.cli.domains.resolve_session_backend")
     def test_no_proxy_message(self, mock_resolve: MagicMock) -> None:
         """Shows message when session was created without a proxy."""
         mock_backend = MagicMock()
@@ -2098,7 +2181,7 @@ class TestBlockedDomainsCLI:
         assert result.exit_code == 0
         assert "created without a proxy" in result.stdout
 
-    @patch("paude.cli.domains._resolve_backend_for_domains")
+    @patch("paude.cli.domains.resolve_session_backend")
     def test_no_blocked_domains_message(self, mock_resolve: MagicMock) -> None:
         """Shows no-blocked message when log is empty."""
         mock_backend = MagicMock()
@@ -2109,7 +2192,7 @@ class TestBlockedDomainsCLI:
         assert result.exit_code == 0
         assert "No blocked domains" in result.stdout
 
-    @patch("paude.cli.domains._resolve_backend_for_domains")
+    @patch("paude.cli.domains.resolve_session_backend")
     def test_raw_output(self, mock_resolve: MagicMock) -> None:
         """--raw dumps raw log content."""
         log = "08/Mar/2026:14:23:45 +0000 10.0.0.2 TCP_DENIED/403 CONNECT evil.com:443 BLOCKED\n"
@@ -2122,7 +2205,7 @@ class TestBlockedDomainsCLI:
         assert "evil.com:443" in result.stdout
         assert "BLOCKED" in result.stdout
 
-    @patch("paude.cli.domains._resolve_backend_for_domains")
+    @patch("paude.cli.domains.resolve_session_backend")
     def test_parsed_summary_output(self, mock_resolve: MagicMock) -> None:
         """Default output shows parsed summary."""
         log = (
@@ -2141,7 +2224,7 @@ class TestBlockedDomainsCLI:
         assert "2 unique domain(s) blocked (3 total requests)" in result.stdout
         assert "paude allowed-domains my-session --add" in result.stdout
 
-    @patch("paude.cli.domains._resolve_backend_for_domains")
+    @patch("paude.cli.domains.resolve_session_backend")
     def test_nonstandard_port_suggests_endpoint_rule(
         self, mock_resolve: MagicMock
     ) -> None:
@@ -2159,7 +2242,7 @@ class TestBlockedDomainsCLI:
         assert "api.example.com:8443" in result.output
         assert "paude allowed-endpoints my-session --add <host:port>" in result.output
 
-    @patch("paude.cli.domains._resolve_backend_for_domains")
+    @patch("paude.cli.domains.resolve_session_backend")
     def test_session_not_found_error(self, mock_resolve: MagicMock) -> None:
         """Shows error when session not found."""
         from paude.backends.podman import SessionNotFoundError
@@ -2173,7 +2256,7 @@ class TestBlockedDomainsCLI:
         result = runner.invoke(app, ["blocked-domains", "nope"])
         assert result.exit_code == 1
 
-    @patch("paude.cli.domains._resolve_backend_for_domains")
+    @patch("paude.cli.domains.resolve_session_backend")
     def test_proxy_not_running_error(self, mock_resolve: MagicMock) -> None:
         """Shows error when proxy not running."""
         mock_backend = MagicMock()

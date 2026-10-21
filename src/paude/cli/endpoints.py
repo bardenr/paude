@@ -7,21 +7,9 @@ from typing import Annotated
 import typer
 
 from paude.backends import SessionNotFoundError
-from paude.backends.base import Backend
 from paude.cli.app import BackendType, app
-from paude.cli.helpers import _get_backend_instance, find_session_backend
+from paude.cli.helpers import resolve_session_backend
 from paude.endpoints import normalize_allowed_endpoints
-
-
-def _resolve_backend(name: str, backend: BackendType | None) -> Backend:
-    """Resolve the explicitly selected or session-owning backend."""
-    if backend is not None:
-        return _get_backend_instance(backend)
-    result = find_session_backend(name)
-    if result is None:
-        typer.echo(f"Session '{name}' not found.", err=True)
-        raise typer.Exit(1)
-    return result[1]
 
 
 def _updated_endpoints(
@@ -74,7 +62,7 @@ def allowed_endpoints_cmd(
         )
         raise typer.Exit(1)
 
-    backend_obj = _resolve_backend(name, backend)
+    backend_obj = resolve_session_backend(name, backend)
     try:
         current = backend_obj.get_allowed_endpoints(name)
         if current is None:

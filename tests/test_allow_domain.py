@@ -8,7 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from paude.backends.podman import SessionNotFoundError as PodmanSessionNotFoundError
+from paude.backends.podman.backend import PodmanBackend
 from paude.backends.podman.proxy import PodmanProxyManager
+from paude.container.proxy_inspect import ProxyInspectionError
 from tests.fakes import make_backend
 
 # ---------------------------------------------------------------------------
@@ -16,6 +18,17 @@ from tests.fakes import make_backend
 # ---------------------------------------------------------------------------
 # PodmanBackend: get_allowed_domains
 # ---------------------------------------------------------------------------
+
+
+def _inspect_env(backend: PodmanBackend, env: dict[str, str] | None) -> MagicMock:
+    """Make the proxy env inspect return ``env``, or fail for None."""
+    inspector = MagicMock()
+    if env is None:
+        inspector.environment.side_effect = ProxyInspectionError("inspect failed")
+    else:
+        inspector.environment.return_value = env
+    backend._proxy._inspector = inspector
+    return inspector
 
 
 class TestPodmanGetAllowedDomains:
@@ -39,27 +52,44 @@ class TestPodmanGetAllowedDomains:
         mock_runner = MagicMock()
         # Both main and proxy containers exist
         mock_runner.container_exists.return_value = True
-        mock_runner.get_container_env.return_value = ".googleapis.com,.pypi.org"
-
         backend = make_backend(mock_runner)
+        inspector = _inspect_env(
+            backend, {"ALLOWED_DOMAINS": ".googleapis.com,.pypi.org"}
+        )
 
         result = backend.get_allowed_domains("my-session")
 
         assert result == [".googleapis.com", ".pypi.org"]
-        mock_runner.get_container_env.assert_called_once_with(
-            "paude-proxy-my-session", "ALLOWED_DOMAINS"
-        )
+        inspector.environment.assert_called_once_with("paude-proxy-my-session")
 
     def test_returns_empty_list_when_proxy_has_no_domains(self) -> None:
         """get_allowed_domains returns empty list when ALLOWED_DOMAINS is empty."""
         mock_runner = MagicMock()
         mock_runner.container_exists.return_value = True
-        mock_runner.get_container_env.return_value = ""
-
         backend = make_backend(mock_runner)
+        _inspect_env(backend, {"PROXY_DNS": "1.1.1.1"})
 
         result = backend.get_allowed_domains("my-session")
         assert result == []
+
+    def test_failed_inspect_raises_instead_of_empty_list(self) -> None:
+        """An unreadable proxy must not look like an empty allow-list."""
+        mock_runner = MagicMock()
+        mock_runner.container_exists.return_value = True
+        backend = make_backend(mock_runner)
+        _inspect_env(backend, None)
+
+        with pytest.raises(ValueError, match="Cannot read ALLOWED_DOMAINS"):
+            backend.get_allowed_domains("my-session")
+
+    def test_failed_inspect_raises_for_endpoints(self) -> None:
+        mock_runner = MagicMock()
+        mock_runner.container_exists.return_value = True
+        backend = make_backend(mock_runner)
+        _inspect_env(backend, None)
+
+        with pytest.raises(ValueError, match="Cannot read ALLOWED_ENDPOINTS"):
+            backend.get_allowed_endpoints("my-session")
 
     def test_raises_session_not_found(self) -> None:
         """get_allowed_domains raises SessionNotFoundError when session missing."""
@@ -176,35 +206,31 @@ class TestPodmanUpdateAllowedDomains:
         credentials = backend._proxy.update_domains.call_args.kwargs["credentials"]
         assert credentials.environment == {}
 
+
+class TestPodmanUpdateAllowedEndpoints:
+    """Tests for PodmanBackend.update_allowed_endpoints."""
+
     @patch(
         "paude.backends.podman.helpers.get_session_credential_providers",
         return_value=["anthropic-oauth"],
     )
     @patch("paude.backends.podman.backend.get_session_composition")
-    def test_explicit_refresh_gathers_a_host_overlay(
+    def test_checks_policy_once_and_passes_image(
         self,
         mock_composition: MagicMock,
         mock_providers: MagicMock,
     ) -> None:
-        from paude.backends.proxy_config import ProxyCredentials
-
         runner = MagicMock()
         runner.container_exists.return_value = True
         backend = make_backend(runner)
         backend._proxy = MagicMock()
-        composition = MagicMock()
-        composition.agents = []
-        mock_composition.return_value = composition
-        fresh = ProxyCredentials(environment={"CLAUDE_CODE_OAUTH_TOKEN": "fresh"})
-        backend._setup.gather_proxy_credentials = MagicMock(  # type: ignore[method-assign]
-            return_value=fresh
-        )
+        backend._proxy.policy_update_proxy_image.return_value = "proxy:cfg"
+        mock_composition.return_value.agents = []
 
-        backend.update_allowed_domains(
-            "my-session", [".example.com"], refresh_credentials=True
-        )
+        backend.update_allowed_endpoints("my-session", ["api.example.com:8443"])
 
-        backend._setup.gather_proxy_credentials.assert_called_once_with(
-            composition, ["anthropic-oauth"]
+        backend._proxy.policy_update_proxy_image.assert_called_once_with(
+            "my-session", "changing endpoints"
         )
-        assert backend._proxy.update_domains.call_args.kwargs["credentials"] is fresh
+        call = backend._proxy.update_endpoints.call_args
+        assert call.kwargs["proxy_image"] == "proxy:cfg"

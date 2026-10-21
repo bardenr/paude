@@ -39,9 +39,7 @@ def _parse_podman_version(output: str) -> tuple[int, ...]:
     raw_version = source.get("Version")
     if not isinstance(raw_version, str):
         raise ValueError("missing Version string")
-    match = re.fullmatch(
-        r"v?(\d+(?:\.\d+)*)(?:[-+][0-9A-Za-z.-]+)?", raw_version
-    )
+    match = re.fullmatch(r"v?(\d+(?:\.\d+)*)(?:[-+][0-9A-Za-z.-]+)?", raw_version)
     if match is None:
         raise ValueError(f"invalid Version value {raw_version!r}")
     return tuple(int(part) for part in match.group(1).split("."))

@@ -341,6 +341,8 @@ The token is never handed to the agent's own container:
 - The agent container's own `GH_TOKEN` environment variable is always a non-functional placeholder; the proxy transparently attaches the real token to requests it forwards to GitHub's API
 - `GH_CONFIG_DIR=/tmp/gh-config` ensures no cached host credentials are ever consulted
 
+**Rotating the token**: export the new `PAUDE_GITHUB_TOKEN` and run `paude refresh-credentials SESSION PAUDE_GITHUB_TOKEN`. The proxy is rebuilt with the new token while allowed domains, endpoints, and other credentials are preserved; the agent container needs no restart. (`paude stop`/`paude start` alone keeps the old token.)
+
 **Security notes**:
 - The host's `GH_TOKEN` environment variable is **never** auto-propagated to the container
 - Use a **fine-grained PAT** scoped to read-only permissions on specific repositories

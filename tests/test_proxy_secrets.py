@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,6 +20,7 @@ from paude.backends.proxy_config import (
 from paude.container.engine import ContainerEngine
 from paude.container.proxy_inspect import ProxyInspectionError
 from paude.container.proxy_runner import ProxyRunner, ProxyStartError
+from paude.container.proxy_swap import ProxySwap
 from paude.container.runner import ContainerRunner
 from tests.fakes import FakeTransport, make_engine, recorded_commands
 
@@ -353,6 +355,51 @@ def _result(
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
 
+class TestBoundTargets:
+    """bound_targets reports what the live proxy carries, per engine."""
+
+    def test_podman_reads_secret_targets(self) -> None:
+        command = [
+            "podman",
+            "create",
+            "--secret",
+            "old-gh,type=env,target=GH_TOKEN",
+            "--secret=paude-proxy-cred-sess-x,type=env,target=CLAUDE_CODE_OAUTH_TOKEN",
+        ]
+        transport = FakeTransport(
+            results={"inspect -f": _result(stdout=json.dumps(command))}
+        )
+        runner = ContainerRunner(make_engine("podman", transport=transport))
+
+        bound = ProxyCredentialManager(runner).bound_targets(
+            "paude-proxy-sess", {"GH_TOKEN"}
+        )
+
+        assert bound == {"GH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
+
+    def test_docker_reads_credential_env_only(self) -> None:
+        current = ["GH_TOKEN=x", "ALLOWED_DOMAINS=.example"]
+        transport = FakeTransport(
+            results={"inspect -f": _result(stdout=json.dumps(current))}
+        )
+        runner = ContainerRunner(make_engine("docker", transport=transport))
+
+        bound = ProxyCredentialManager(runner).bound_targets(
+            "paude-proxy-sess", {"GH_TOKEN", "ANTHROPIC_API_KEY"}
+        )
+
+        assert bound == {"GH_TOKEN"}
+
+    def test_inspect_failure_raises(self) -> None:
+        transport = FakeTransport(
+            results={"inspect -f": _result(returncode=1, stderr="boom")}
+        )
+        runner = ContainerRunner(make_engine("podman", transport=transport))
+
+        with pytest.raises(ProxyInspectionError):
+            ProxyCredentialManager(runner).bound_targets("paude-proxy-sess", set())
+
+
 class TestCredentialPreservingUpdates:
     """Credential update preparation reads the live binding, not ambient state."""
 
@@ -454,6 +501,29 @@ class TestCredentialPreservingUpdates:
 
         assert len(recorded_commands(runner.engine)) == 1
 
+    @pytest.mark.parametrize("engine", ["podman", "docker"])
+    def test_missing_binding_hint_keeps_refreshed_names(self, engine: str) -> None:
+        transport = FakeTransport(results={"inspect -f": _result(stdout="[]")})
+        runner = ContainerRunner(make_engine(engine, transport=transport))
+
+        with pytest.raises(
+            ValueError, match="missing: CLAUDE_CODE_OAUTH_TOKEN"
+        ) as excinfo:
+            ProxyCredentialManager(runner).prepare_update(
+                "sess",
+                "paude-proxy-sess",
+                ProxyCredentials(environment={"GH_TOKEN": "new"}),
+                {"CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN"},
+                {"CLAUDE_CODE_OAUTH_TOKEN"},
+            )
+
+        message = str(excinfo.value)
+        assert (
+            "'paude refresh-credentials sess CLAUDE_CODE_OAUTH_TOKEN "
+            "PAUDE_GITHUB_TOKEN'" in message
+        )
+        assert "paude upgrade" not in message
+
     def test_inspect_failure_is_not_treated_as_no_credentials(self) -> None:
         transport = FakeTransport(
             results={"inspect -f": _result(returncode=1, stderr="inspect failed")}
@@ -540,6 +610,121 @@ class TestCredentialPreservingUpdates:
 
         assert required == set()
         assert prepared.credentials.environment == {"GH_TOKEN": "unrelated"}
+
+
+class TestCommitProxySwap:
+    """Commit preserves the predecessor's running state."""
+
+    @staticmethod
+    def _swap(
+        *, old_running: bool, agent_running: bool | None = None
+    ) -> tuple[ProxySwap, MagicMock]:
+        engine = MagicMock()
+        engine.run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        runner = MagicMock(spec=ContainerRunner)
+        runner.engine = engine
+        runner.get_container_state.return_value = (
+            "running" if agent_running else "exited"
+        )
+        swap = ProxySwap(
+            runner=runner,
+            name="paude-proxy-sess",
+            backup_name="paude-proxy-sess-rollback-1",
+            network="paude-net-sess",
+            ip=None,
+            old_running=old_running,
+            keep_running_for=None if agent_running is None else "paude-sess",
+        )
+        return swap, engine
+
+    def test_stopped_predecessor_leaves_candidate_stopped(self) -> None:
+        swap, engine = self._swap(old_running=False)
+
+        swap.commit()
+
+        commands = [call.args for call in engine.run.call_args_list]
+        assert commands == [
+            ("stop", "-t", "1", "paude-proxy-sess"),
+            ("rm", "-f", "paude-proxy-sess-rollback-1"),
+        ]
+
+    def test_running_predecessor_keeps_candidate_running(self) -> None:
+        swap, engine = self._swap(old_running=True)
+
+        swap.commit()
+
+        commands = [call.args for call in engine.run.call_args_list]
+        assert commands == [("rm", "-f", "paude-proxy-sess-rollback-1")]
+
+    def test_running_agent_overrides_stopped_predecessor(self) -> None:
+        swap, engine = self._swap(old_running=False, agent_running=True)
+
+        swap.commit()
+
+        commands = [call.args for call in engine.run.call_args_list]
+        assert commands == [("rm", "-f", "paude-proxy-sess-rollback-1")]
+        cast(MagicMock, swap.runner).get_container_state.assert_called_once_with(
+            "paude-sess"
+        )
+
+    def test_stopped_agent_leaves_candidate_stopped(self) -> None:
+        swap, engine = self._swap(old_running=False, agent_running=False)
+
+        swap.commit()
+
+        commands = [call.args for call in engine.run.call_args_list]
+        assert commands[0] == ("stop", "-t", "1", "paude-proxy-sess")
+
+    def test_running_predecessor_skips_agent_inspect(self) -> None:
+        swap, _ = self._swap(old_running=True, agent_running=False)
+
+        swap.commit()
+
+        cast(MagicMock, swap.runner).get_container_state.assert_not_called()
+
+    def test_failed_agent_inspect_keeps_candidate_running(self) -> None:
+        # Stopping under a possibly-running agent would cut its egress.
+        swap, engine = self._swap(old_running=False, agent_running=True)
+        runner = cast(MagicMock, swap.runner)
+        runner.get_container_state.return_value = None
+        runner.container_exists.return_value = True
+
+        swap.commit()
+
+        commands = [call.args for call in engine.run.call_args_list]
+        assert commands == [("rm", "-f", "paude-proxy-sess-rollback-1")]
+
+    def test_missing_agent_leaves_candidate_stopped(self) -> None:
+        swap, engine = self._swap(old_running=False, agent_running=True)
+        runner = cast(MagicMock, swap.runner)
+        runner.get_container_state.return_value = None
+        runner.container_exists.return_value = False
+
+        swap.commit()
+
+        commands = [call.args for call in engine.run.call_args_list]
+        assert commands[0] == ("stop", "-t", "1", "paude-proxy-sess")
+        runner.container_exists.assert_called_once_with("paude-sess")
+
+    @pytest.mark.parametrize("state", ["paused", "restarting", "stopping"])
+    def test_non_stopped_agent_keeps_candidate_running(self, state: str) -> None:
+        # A paused or restarting agent still needs egress once it resumes.
+        swap, engine = self._swap(old_running=False, agent_running=True)
+        cast(MagicMock, swap.runner).get_container_state.return_value = state
+
+        swap.commit()
+
+        commands = [call.args for call in engine.run.call_args_list]
+        assert commands == [("rm", "-f", "paude-proxy-sess-rollback-1")]
+
+    def test_stop_failure_keeps_predecessor_for_rollback(self) -> None:
+        swap, engine = self._swap(old_running=False)
+        engine.run.return_value = MagicMock(returncode=1, stdout="", stderr="nope")
+
+        with pytest.raises(ProxyStartError, match="stop replacement proxy"):
+            swap.commit()
+
+        assert engine.run.call_count == 1
 
 
 class TestRollbackProxySwap:

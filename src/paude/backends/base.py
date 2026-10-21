@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from paude.backends.port_forward_utils import ForwardPort
+
+if TYPE_CHECKING:
+    from paude.backends.proxy_credential_refresh import ProxyCredentialStatus
 
 
 class SessionNotFoundError(Exception):
@@ -247,20 +250,51 @@ class Backend(Protocol):
         """
         ...
 
-    def update_allowed_domains(
-        self,
-        name: str,
-        domains: list[str],
-        *,
-        refresh_credentials: bool = False,
-    ) -> None:
+    def update_allowed_domains(self, name: str, domains: list[str]) -> None:
         """Update allowed domains for a session.
 
         Args:
             name: Session name.
             domains: New list of allowed domains.
-            refresh_credentials: Replace bindings for credentials currently
-                supplied by the host while preserving all other bindings.
+        """
+        ...
+
+    def list_proxy_credentials(self, name: str) -> list[ProxyCredentialStatus] | None:
+        """List the credentials this session's proxy can carry.
+
+        Covers the credentials the session's agents and providers use, by
+        host-side name (e.g. PAUDE_GITHUB_TOKEN, gcp-adc), with whether each
+        is bound on the proxy and available on the host. Never reads values
+        into the result.
+
+        Returns:
+            Statuses sorted by name, or None if the session has no proxy
+            (unrestricted network).
+
+        Raises:
+            SessionNotFoundError: If session not found.
+        """
+        ...
+
+    def refresh_proxy_credentials(self, name: str, names: list[str]) -> list[str]:
+        """Rebind the named proxy credentials from the host environment.
+
+        Only the named credentials are rebound; a named credential the proxy
+        lacks is attached. Allowed domains, endpoints, and all other bindings
+        are preserved. A stopped session stays stopped.
+
+        Args:
+            name: Session name.
+            names: Host-side credential names (e.g. PAUDE_GITHUB_TOKEN,
+                gcp-adc) to rebind. Must not be empty.
+
+        Returns:
+            Sorted host-side names of the refreshed credentials (never values).
+
+        Raises:
+            SessionNotFoundError: If session not found.
+            ValueError: If no name is given, a name is unknown or unused by
+                the session, a named value is absent, or there is no proxy.
         """
         ...
 

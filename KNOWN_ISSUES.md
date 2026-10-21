@@ -25,9 +25,11 @@ after the session-rebuild consolidation):
 - `container/image.py` — 531 lines
 - `cli/helpers.py` — 515 lines
 - `container/runner.py` — 460 lines
-- `backends/podman/backend.py` — 448 lines (was 479; two teardowns moved to
-  `backends/podman/resources.py`)
-- `backends/podman/proxy.py` — 680 lines (regrew past 400 after the 2026-07-23
+- `backends/podman/backend.py` — 570 lines (was 448 after two teardowns moved
+  to `backends/podman/resources.py`; regrew with `refresh_proxy_credentials`
+  and the shared `_proxy_update_context`). The proxy-policy methods
+  (domains/endpoints/credentials) are a natural extraction candidate.
+- `backends/podman/proxy.py` — 734 lines (regrew past 400 after the 2026-07-23
   split; `--credential-domain` routing added ~40 more). The three proxy
   (re)create paths (`create_proxy`, `start_if_needed`, `update_domains`) each
   assemble the same env/secrets/routes inputs and are the natural extraction.
@@ -258,6 +260,25 @@ consolidation does not answer: whether a rename rewrites `PAUDE_LABEL_WORKSPACE`
 whether `--host` re-syncs configs and registers `remote_config_dir` (see
 UPGRADE-002), and whether the bundle's recorded `image` is reused or rebuilt.
 
+### REFACTOR-010: Proxy updates repeat session-label and proxy lookups
+
+**Status**: Open
+**Priority**: Low
+**Discovered**: 2026-10-21 during the `/simplify` pass on `paude refresh-credentials`
+
+Each `PodmanBackend` proxy update (`update_allowed_domains`,
+`update_allowed_endpoints`, `refresh_proxy_credentials`) runs the same
+`ps` label scan several times: `policy_update_proxy_image`,
+`get_session_composition`, `get_session_credential_providers`, and
+`get_config_from_labels` inside `update_domains` each look up the session
+container. Each lookup is a network round-trip on SSH backends. Read
+the labels once in the backend and pass them down (`spec_from_labels`
+already accepts a label dict).
+
+Related reuse gap: `extra_env.py` (~line 31)
+hard-codes the `GH_TOKEN` → `PAUDE_GITHUB_TOKEN` hint instead of calling
+`proxy_config.proxy_credential_source`.
+
 ## Correctness Backlog
 
 Lower-severity correctness/robustness issues surfaced during code review.
@@ -468,6 +489,55 @@ session recreated that way comes up with no `CLAUDE_CODE_OAUTH_TOKEN` (or API
 key) binding, even though the Podman secret from `create` may still exist. A
 fix would either reuse the session's existing credential secrets when
 recreating, or run `check_required_secrets` in that branch only.
+
+### PROXY-002: `stop`/`start` keeps stale proxy credentials after rotation
+
+**Status**: Open
+**Severity**: Low
+**Discovered**: 2026-10-21 while reviewing `paude refresh-credentials`
+
+`PodmanProxyManager.start_if_needed` restarts an existing proxy container
+as-is, so a credential rotated on the host (e.g. a new
+`PAUDE_GITHUB_TOKEN`) is ignored until the user runs
+`paude refresh-credentials`. The natural workflow of rotating and then
+restarting still fails auth. A fix would have `start` overlay rotated
+credentials using the same `prepare_update` path. That needs care: sweeping
+every exported value would rebind stale ones from the shell, which is why
+`refresh-credentials` rebinds only the credentials named on its command
+line.
+
+### PROXY-003: `allowed-domains` skips the endpoint-label guard other proxy rebuilds use
+
+**Status**: Open
+**Severity**: Low
+**Discovered**: 2026-10-21 while simplifying `paude refresh-credentials`
+
+`PodmanBackend.update_allowed_endpoints` and `refresh_proxy_credentials`
+call `policy_update_proxy_image` before rebuilding the proxy through
+`update_domains`; it refuses sessions without the endpoint label and pins
+the configured proxy image. `update_allowed_domains` skips it, so on a pre-endpoint session it rebuilds with the running image
+and an empty endpoint list. The guard belongs inside one shared rebuild
+helper that loads current domains/endpoints/image itself and takes
+per-field overrides, so every caller gets it. Changing it alters
+`allowed-domains` behavior on old sessions, so it was left out of the
+simplification pass. The refresh path also reads durable policy state
+twice (`get_config_from_labels` and `read_pair`), costing an extra helper
+container run; see PERF-001.
+
+### REFACTOR-011: allowed-domains and refresh-credentials read current domains differently
+
+**Severity**: Medium
+**Discovered**: 2026-10-21 while simplifying `paude refresh-credentials`
+
+`allowed-domains --add/--remove` builds on `get_allowed_domains` (the proxy
+env). `update_domains(domains=None)`, which `refresh-credentials` and
+`allowed-endpoints` use, prefers the durable policy state. If these ever
+diverge (for example after a failed state restore), a credential refresh
+silently writes back a different allowlist than `allowed-domains` shows. One
+`current_domains()` reader (durable state, then env) used by every caller
+would fix this. Moving the add/remove merge into the backend so the base list
+is read inside the swap would fix it better. This alters `allowed-domains`
+behavior, so the simplification pass left it out.
 
 ## Agent Limitations
 
@@ -1009,6 +1079,12 @@ domains with the proxy's semantics rather than the advisory
 built-in route or claims a suffix route's apex is accepted as redundant
 instead of being rejected as a conflict, and `paude connect` reports a
 rebuild collision as a one-line error like `paude start` does.
+
+**Extended (2026-10-21):** proxy updates (`update_domains`, behind
+`refresh-credentials`, `allowed-domains`, and `allowed-endpoints`) reuse
+the routes file but can attach a credential, reviving a built-in route a
+spec shadows. They now run the same check against the updated proxy's
+full binding set before the swap.
 
 ## Documentation Gaps
 

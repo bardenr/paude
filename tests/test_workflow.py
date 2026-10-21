@@ -851,6 +851,7 @@ class TestHarvestSession:
             "paude-test", cwd=tmp_path, source_ref="refs/heads/main"
         )
 
+
 class TestVerifyContainerRepo:
     """Tests for _verify_container_repo."""
 

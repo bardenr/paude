@@ -12,7 +12,6 @@ from paude.agents.base import (
     AgentComposition,
     AgentConfig,
     build_environment_from_config,
-    build_secret_environment_from_config,
     compose_dockerfile_install_lines,
     nodejs_prereq_install_lines,
     pipefail_install_lines,
@@ -24,6 +23,7 @@ from paude.agents.gascity import GascityAgent
 from paude.agents.gemini import GeminiAgent
 from paude.agents.openclaw import OpenClawAgent
 from paude.agents.opencode import OpenCodeAgent
+from paude.backends.proxy_config import gather_proxy_credentials
 
 
 class TestRegistry:
@@ -717,9 +717,9 @@ class TestCodexAgentBuildEnvironment:
             {"OPENAI_API_KEY": "sk-test", "UNRELATED": "x"},
             clear=True,
         ):
-            env = build_secret_environment_from_config(
+            env = gather_proxy_credentials(
                 CodexAgent(provider="openai").config
-            )
+            ).environment
             assert env == {"OPENAI_API_KEY": "sk-test"}
 
 
@@ -1107,7 +1107,7 @@ class TestCursorAgentBuildEnvironment:
             {"CURSOR_API_KEY": "sk-test", "UNRELATED": "x"},
             clear=True,
         ):
-            env = build_secret_environment_from_config(CursorAgent().config)
+            env = gather_proxy_credentials(CursorAgent().config).environment
             assert env == {"CURSOR_API_KEY": "sk-test"}
 
 
@@ -1415,48 +1415,6 @@ class TestBuildEnvironmentFromConfig:
             assert env["GOOGLE_CLOUD_PROJECT"] == "vertex-proj"
 
 
-class TestBuildSecretEnvironmentFromConfig:
-    """Tests for the build_secret_environment_from_config helper."""
-
-    def test_collects_secret_vars(self) -> None:
-        config = AgentConfig(
-            name="test",
-            display_name="Test",
-            process_name="test",
-            session_name="test",
-            install_script="echo hi",
-            secret_env_vars=["MY_SECRET"],
-        )
-        with patch.dict("os.environ", {"MY_SECRET": "val", "OTHER": "x"}, clear=True):
-            env = build_secret_environment_from_config(config)
-            assert env == {"MY_SECRET": "val"}
-
-    def test_empty_when_no_matches(self) -> None:
-        config = AgentConfig(
-            name="test",
-            display_name="Test",
-            process_name="test",
-            session_name="test",
-            install_script="echo hi",
-            secret_env_vars=["MISSING"],
-        )
-        with patch.dict("os.environ", {"OTHER": "x"}, clear=True):
-            env = build_secret_environment_from_config(config)
-            assert env == {}
-
-    def test_empty_when_no_secret_vars_defined(self) -> None:
-        config = AgentConfig(
-            name="test",
-            display_name="Test",
-            process_name="test",
-            session_name="test",
-            install_script="echo hi",
-        )
-        with patch.dict("os.environ", {"SOME_VAR": "x"}, clear=True):
-            env = build_secret_environment_from_config(config)
-            assert env == {}
-
-
 class TestOpenCodeAgentConfig:
     """Tests for OpenCodeAgent configuration values."""
 
@@ -1647,7 +1605,7 @@ class TestOpenCodeAgentBuildEnvironment:
             {"ANTHROPIC_API_KEY": "sk-test", "UNRELATED": "x"},
             clear=True,
         ):
-            env = build_secret_environment_from_config(OpenCodeAgent().config)
+            env = gather_proxy_credentials(OpenCodeAgent().config).environment
             assert env == {"ANTHROPIC_API_KEY": "sk-test"}
 
     def test_secret_env_collects_openai_key(self) -> None:
@@ -1656,9 +1614,9 @@ class TestOpenCodeAgentBuildEnvironment:
             {"OPENAI_API_KEY": "sk-test", "UNRELATED": "x"},
             clear=True,
         ):
-            env = build_secret_environment_from_config(
+            env = gather_proxy_credentials(
                 OpenCodeAgent(provider="openai").config
-            )
+            ).environment
             assert env == {"OPENAI_API_KEY": "sk-test"}
 
     def test_passes_through_vertex_vars(self) -> None:
@@ -1905,7 +1863,7 @@ class TestOpenClawAgentBuildEnvironment:
             },
             clear=True,
         ):
-            env = build_secret_environment_from_config(OpenClawAgent().config)
+            env = gather_proxy_credentials(OpenClawAgent().config).environment
             assert env == {}
 
     def test_secret_env_collects_openai_key(self) -> None:
@@ -1914,9 +1872,9 @@ class TestOpenClawAgentBuildEnvironment:
             {"OPENAI_API_KEY": "sk-oai", "UNRELATED": "x"},
             clear=True,
         ):
-            env = build_secret_environment_from_config(
+            env = gather_proxy_credentials(
                 OpenClawAgent(provider="openai").config
-            )
+            ).environment
             assert env == {"OPENAI_API_KEY": "sk-oai"}
 
 

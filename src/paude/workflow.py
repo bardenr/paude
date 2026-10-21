@@ -153,9 +153,7 @@ def _resolve_harvest_target(
                 session_name, current_repo, container_path
             )
             if len(candidates) > 1:
-                details = ", ".join(
-                    f"{name} ({path})" for name, path in candidates
-                )
+                details = ", ".join(f"{name} ({path})" for name, path in candidates)
                 typer.echo(
                     f"Error: Multiple remotes in the current repository target "
                     f"session '{session_name}': {details}.",

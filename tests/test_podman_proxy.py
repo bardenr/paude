@@ -25,6 +25,7 @@ from paude.backends.podman.proxy import (
 from paude.backends.podman.proxy_credentials import PreparedProxyCredentials
 from paude.backends.proxy_config import ProxyCredentials, derive_agent_ip
 from paude.container.engine import UnsupportedEngineError
+from paude.container.proxy_inspect import ProxyInspectionError
 from paude.container.proxy_runner import ProxyStartError
 from tests.fakes import FakeTransport, make_engine, make_runner, recorded_commands
 
@@ -1174,6 +1175,24 @@ class TestUpdateDomainsCaResilience:
 class TestUpdateDomainTransaction:
     """Durable state and retained-proxy swap commit or roll back together."""
 
+    def test_missing_proxy_reports_no_proxy(self) -> None:
+        runner = _make_mock_runner()
+        runner.get_container_image.return_value = None
+        runner.container_exists.return_value = False
+        manager = PodmanProxyManager(runner, MagicMock())
+
+        with pytest.raises(ValueError, match="has no proxy.*Cannot update domains"):
+            manager.update_domains("test-session", ["example.com"])
+
+    def test_uninspectable_proxy_reports_inspect_failure(self) -> None:
+        runner = _make_mock_runner()
+        runner.get_container_image.return_value = None
+        runner.container_exists.return_value = True
+        manager = PodmanProxyManager(runner, MagicMock())
+
+        with pytest.raises(ValueError, match="Cannot inspect proxy container"):
+            manager.update_domains("test-session", ["example.com"])
+
     @patch("paude.backends.podman.proxy._get_host_dns", return_value=None)
     def test_state_write_failure_restores_proxy_state_and_staged_secrets(
         self, mock_dns: MagicMock
@@ -1297,27 +1316,26 @@ class TestUpdateEndpointsCapability:
             }
         ]
         manager = PodmanProxyManager(runner, MagicMock())
-        manager._proxy_runner = MagicMock()
 
         with pytest.raises(ValueError, match="paude upgrade test-session"):
-            manager.update_endpoints("test-session", ["api.example.com:8443"])
-
-        manager._proxy_runner.swap_session_proxy.assert_not_called()
+            manager.policy_update_proxy_image("test-session", "changing endpoints")
 
     def test_warns_after_updating_uncovered_endpoint(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         manager = PodmanProxyManager(_make_mock_runner(), MagicMock())
-        manager._endpoint_update_proxy_image = MagicMock(  # type: ignore[method-assign]
-            return_value="proxy:endpoint-capable"
-        )
-        manager.get_allowed_domains = MagicMock(  # type: ignore[method-assign]
+        manager.update_domains = MagicMock(  # type: ignore[method-assign]
             return_value=["other.example"]
         )
-        manager.update_domains = MagicMock()  # type: ignore[method-assign]
 
-        manager.update_endpoints("test-session", ["api.example.com:8443"])
+        manager.update_endpoints(
+            "test-session",
+            ["api.example.com:8443"],
+            proxy_image="proxy:endpoint-capable",
+        )
 
+        # Domains come from update_domains' own lookup, not a second read.
+        assert manager.update_domains.call_args.args == ("test-session", None)
         stderr = capsys.readouterr().err
         assert "will remain blocked" in stderr
         assert "paude allowed-domains test-session --add api.example.com" in stderr
@@ -1335,15 +1353,15 @@ class TestUpdateEndpointsCapability:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         manager = PodmanProxyManager(_make_mock_runner(), MagicMock())
-        manager._endpoint_update_proxy_image = MagicMock(  # type: ignore[method-assign]
-            return_value="proxy:endpoint-capable"
-        )
-        manager.get_allowed_domains = MagicMock(  # type: ignore[method-assign]
+        manager.update_domains = MagicMock(  # type: ignore[method-assign]
             return_value=domains
         )
-        manager.update_domains = MagicMock()  # type: ignore[method-assign]
 
-        manager.update_endpoints("test-session", ["api.example.com:8443"])
+        manager.update_endpoints(
+            "test-session",
+            ["api.example.com:8443"],
+            proxy_image="proxy:endpoint-capable",
+        )
 
         assert "will remain blocked" not in capsys.readouterr().err
 
@@ -1380,7 +1398,11 @@ class TestUpdateEndpointsCapability:
         manager._proxy_runner.swap_session_proxy.return_value = MagicMock()
         manager._ca_cert = MagicMock()
 
-        manager.update_endpoints("test-session", ["api.example.com:8443"])
+        manager.update_endpoints(
+            "test-session",
+            ["api.example.com:8443"],
+            proxy_image="proxy:endpoint-capable",
+        )
 
         swap_args = manager._proxy_runner.swap_session_proxy.call_args.kwargs
         assert swap_args["image"] == "proxy:endpoint-capable"
@@ -1393,6 +1415,36 @@ class TestUpdateEndpointsCapability:
             "proxy:endpoint-capable",
             ["api.example.com:8443"],
         )
+
+
+class TestUpdateKeepsProxyForRunningAgent:
+    """A running agent keeps its replacement proxy even if the old one died."""
+
+    @patch("paude.backends.podman.proxy._get_host_dns", return_value=None)
+    def test_swap_keeps_running_for_agent_container(self, mock_dns: MagicMock) -> None:
+        runner = _make_mock_runner()
+        runner.container_exists.return_value = True
+        runner.get_container_image.return_value = "proxy:img"
+        runner.list_containers.return_value = []
+        network = MagicMock()
+        network.get_network_gateway.return_value = "10.89.0.1"
+        manager = PodmanProxyManager(runner, network)
+        manager._credentials = MagicMock()
+        manager._credentials.prepare_update.return_value = PreparedProxyCredentials(
+            credentials=ProxyCredentials()
+        )
+        manager._credentials.credential_env.return_value = {}
+        manager._state = MagicMock()
+        manager._endpoint_state = MagicMock()
+        manager._state.read_pair.return_value = (["a.example"], None)
+        manager._proxy_runner = MagicMock()
+        manager._ca_cert = MagicMock()
+
+        applied = manager.update_domains("test-session", None)
+
+        assert applied == ["a.example"]
+        swap_args = manager._proxy_runner.swap_session_proxy.call_args.kwargs
+        assert swap_args["keep_running_for"] == "paude-test-session"
 
 
 class TestSourceIpFiltering:
@@ -1739,3 +1791,144 @@ class TestCredentialRoutes:
             "PAUDE_PROXY_CREDENTIALS_CONFIG": "/data/auth/credential-routes.json"
         }
         assert self._routes_written(runner) == []
+
+    def _update_manager(
+        self, prepared: PreparedProxyCredentials, spec: str
+    ) -> tuple[PodmanProxyManager, MagicMock, MagicMock]:
+        """Return the manager plus its credential and proxy-runner mocks."""
+        _, manager = self._manager(proxy_exists=True)
+        manager.get_config_from_labels = MagicMock(  # type: ignore[method-assign]
+            return_value=("proxy:latest", ["gw.example.com"], [], [], [spec])
+        )
+        credentials = MagicMock()
+        credentials.prepare_update.return_value = prepared
+        credentials.credential_env.return_value = {}
+        manager._credentials = credentials
+        manager._state = MagicMock()
+        manager._state.read_pair.return_value = (["gw.example.com"], None)
+        proxy_runner = MagicMock()
+        manager._proxy_runner = proxy_runner
+        return manager, credentials, proxy_runner
+
+    @patch("paude.backends.podman.proxy._get_host_dns", return_value=None)
+    def test_update_rejects_refresh_that_revives_builtin_route(
+        self, mock_dns: MagicMock
+    ) -> None:
+        """Attaching a credential whose built-in route a spec shadows fails
+        before the swap and discards the staged secrets."""
+        prepared = PreparedProxyCredentials(
+            credentials=ProxyCredentials(),
+            secret_refs=[
+                "old,type=env,target=ANTHROPIC_API_KEY",
+                "new,type=env,target=GH_TOKEN",
+            ],
+            staged_secrets=["new"],
+        )
+        manager, credentials, proxy_runner = self._update_manager(
+            prepared, "anthropic=api.github.com:443"
+        )
+
+        with pytest.raises(ValueError, match="GH_TOKEN via a built-in route"):
+            manager.update_domains("s", None, credentials={"GH_TOKEN": "ghp"})
+
+        proxy_runner.swap_session_proxy.assert_not_called()
+        credentials.rollback_update.assert_called_once_with(prepared)
+
+    @patch("paude.backends.podman.proxy._get_host_dns", return_value=None)
+    def test_update_allows_spec_on_dead_builtin_route(
+        self, mock_dns: MagicMock
+    ) -> None:
+        """Plain env bindings count too; an unbound rival route is skipped."""
+        prepared = PreparedProxyCredentials(
+            credentials=ProxyCredentials(environment={"ANTHROPIC_API_KEY": "sk"})
+        )
+        manager, _, proxy_runner = self._update_manager(
+            prepared, "anthropic=api.github.com:443"
+        )
+
+        manager.update_domains("s", None)
+
+        proxy_runner.swap_session_proxy.assert_called_once()
+
+
+class TestUpdateDomainsKeepCurrent:
+    """update_domains(domains=None) keeps the proxy's current domains."""
+
+    def test_missing_proxy_names_operation(self) -> None:
+        mock_runner = _make_mock_runner("podman")
+        mock_runner.container_exists.return_value = False
+        manager = PodmanProxyManager(mock_runner, MagicMock())
+
+        with pytest.raises(ValueError, match="no proxy.*Cannot update credentials"):
+            manager.require_proxy("test-session", "credentials")
+
+    @staticmethod
+    def _manager(
+        durable: list[str] | None,
+        env_domains: str | None,
+        env_vars: dict[str, str] | None = None,
+    ) -> PodmanProxyManager:
+        if env_vars is None and env_domains is not None:
+            env_vars = {"ALLOWED_DOMAINS": env_domains}
+        mock_runner = _make_mock_runner("podman")
+        mock_runner.container_exists.return_value = True
+        mock_runner.get_container_image.return_value = "proxy:latest"
+        mock_runner.container_running.return_value = False
+        mock_runner.get_container_env.return_value = env_domains
+        mock_network = MagicMock()
+        mock_network.get_network_gateway.return_value = "10.89.0.1"
+        manager = PodmanProxyManager(mock_runner, mock_network)
+        manager._inspector = MagicMock()
+        if env_vars is None:
+            manager._inspector.environment.side_effect = ProxyInspectionError(
+                "inspect failed"
+            )
+        else:
+            manager._inspector.environment.return_value = env_vars
+        manager._state.read_pair = MagicMock(  # type: ignore[method-assign]
+            return_value=(durable, None)
+        )
+        manager._credentials.prepare_update = MagicMock()  # type: ignore[method-assign]
+        manager._credentials.commit_update = MagicMock()  # type: ignore[method-assign]
+        manager._state.write = MagicMock()  # type: ignore[method-assign]
+        return manager
+
+    @patch("paude.backends.podman.proxy._get_host_dns", return_value=None)
+    def test_none_prefers_durable_domain_state(self, mock_dns: MagicMock) -> None:
+        manager = self._manager([".pypi.org"], ".stale.example")
+
+        with patch.object(manager._proxy_runner, "swap_session_proxy") as swap:
+            manager.update_domains("test-session", None, operation_label="credentials")
+
+        assert swap.call_args.kwargs["allowed_domains"] == [".pypi.org"]
+
+    @patch("paude.backends.podman.proxy._get_host_dns", return_value=None)
+    def test_none_falls_back_to_container_env(self, mock_dns: MagicMock) -> None:
+        manager = self._manager(None, ".pypi.org,.github.com")
+
+        with patch.object(manager._proxy_runner, "swap_session_proxy") as swap:
+            manager.update_domains("test-session", None, operation_label="credentials")
+
+        assert swap.call_args.kwargs["allowed_domains"] == [".pypi.org", ".github.com"]
+
+    @patch("paude.backends.podman.proxy._get_host_dns", return_value=None)
+    def test_none_with_unset_env_keeps_empty_domains(self, mock_dns: MagicMock) -> None:
+        # The launcher omits ALLOWED_DOMAINS when the list is empty.
+        manager = self._manager(None, None, env_vars={"PROXY_DNS": "1.1.1.1"})
+
+        with patch.object(manager._proxy_runner, "swap_session_proxy") as swap:
+            manager.update_domains("test-session", None, operation_label="credentials")
+
+        assert swap.call_args.kwargs["allowed_domains"] == []
+
+    @patch("paude.backends.podman.proxy._get_host_dns", return_value=None)
+    def test_none_with_unknown_domains_refuses_swap(self, mock_dns: MagicMock) -> None:
+        manager = self._manager(None, None)
+
+        with (
+            patch.object(manager._proxy_runner, "swap_session_proxy") as swap,
+            pytest.raises(ValueError, match="Cannot read ALLOWED_DOMAINS"),
+        ):
+            manager.update_domains("test-session", None, operation_label="credentials")
+
+        swap.assert_not_called()

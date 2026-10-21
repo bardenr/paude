@@ -364,18 +364,34 @@ This grants port 8000 only to that host. `allowed-endpoints` also supports
 policy list and use the same rollback-safe swap. IPv6 authorities must be
 bracketed, for example `[2001:db8::1]:4317`.
 
-To deliberately replace credentials whose fresh values are available in the
-current environment, add `--refresh-credentials` to a domain mutation. Fresh
-values replace matching bindings while unrelated credentials remain attached:
+To rotate a credential on an existing session, export the new value and run
+`paude refresh-credentials` with the credential's name. Only the named
+credentials are rebound from the current environment; allowed domains,
+endpoints, and all other credentials are preserved. The session can be running
+or stopped (a stopped session stays stopped), and the agent container needs no
+restart:
 
 ```bash
-export CLAUDE_CODE_OAUTH_TOKEN=new-setup-token
-paude allowed-domains SESSION --add .example.com --refresh-credentials
+export PAUDE_GITHUB_TOKEN=github_pat_new
+paude refresh-credentials SESSION PAUDE_GITHUB_TOKEN
 ```
 
-If a required binding is neither attached nor supplied for an explicit
-refresh, the command fails before changing the working proxy and names the
-missing environment variable.
+Credentials are named the way you supply them on the host: the environment
+variable (`PAUDE_GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, ...) or `gcp-adc` for the
+local gcloud ADC file. Run the command with no names to list the session's
+credentials, whether the proxy carries each one, and whether a value is
+available on the host; nothing is changed:
+
+```bash
+paude refresh-credentials SESSION
+```
+
+Several names can be given to rotate them in one proxy swap. Naming a
+credential the proxy does not carry yet attaches it. Nothing is picked up
+implicitly, so other values exported in your shell are never applied.
+
+If a required binding is neither attached nor named in the refresh, the command
+fails before changing the working proxy and names the missing credential.
 
 ### Backing up a session
 

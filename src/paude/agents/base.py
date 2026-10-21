@@ -140,7 +140,8 @@ def build_environment_from_config(config: AgentConfig) -> dict[str, str]:
     """Build environment dict from static env_vars and passthrough vars from os.environ.
 
     Secret env vars (listed in config.secret_env_vars) are excluded from
-    this output. Use build_secret_environment_from_config() for those.
+    this output; the proxy gathers those (see
+    paude.backends.proxy_config.gather_proxy_credentials).
     """
     secret_set = set(config.secret_env_vars)
     env: dict[str, str] = {}
@@ -178,16 +179,6 @@ def _sync_equivalent_vars(
                 env[b] = env[a]
             elif b in env and a not in env:
                 env[a] = env[b]
-
-
-def build_secret_environment_from_config(config: AgentConfig) -> dict[str, str]:
-    """Build environment dict for secret env vars from os.environ."""
-    env: dict[str, str] = {}
-    for var in config.secret_env_vars:
-        value = os.environ.get(var)
-        if value:
-            env[var] = value
-    return env
 
 
 def pipefail_install_lines(config: AgentConfig, container_home: str) -> list[str]:

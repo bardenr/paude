@@ -170,14 +170,20 @@ class SessionSetup:
         self,
         composition: AgentComposition,
         credential_providers: list[str] | None = None,
+        *,
+        include_adc: bool = True,
     ) -> ProxyCredentials:
-        """Gather real credentials from host environment for the proxy container."""
+        """Gather real credentials from host environment for the proxy container.
+
+        ``include_adc=False`` skips reading the gcloud ADC file for callers
+        that would discard it anyway.
+        """
         from paude.backends.proxy_config import gather_proxy_credentials
 
         return gather_proxy_credentials(
             composition,
             credential_providers=credential_providers,
-            gcp_adc_path=self.local_adc_path(),
+            gcp_adc_path=self.local_adc_path() if include_adc else None,
         )
 
     def inject_stub_credentials(self, cname: str) -> None:
